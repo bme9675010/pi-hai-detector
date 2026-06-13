@@ -354,6 +354,7 @@ function renderEnergy() {
 
   $app.innerHTML = `
     ${topbar('今日放電任務')}
+    ${weatherBannerHTML()}
     <div class="card">
       <div class="field-label">年齡層</div><div class="muted" style="font-size:.85rem">目前小孩：${esc(c.name)}（${c.age} 歲）</div>
       <div class="field-label">時段</div>
@@ -366,6 +367,42 @@ function renderEnergy() {
     </div>
     ${taskHtml}
   `;
+  loadWeatherBanner();   // 非同步抓天氣，回來後只更新天氣那塊
+}
+
+/* ---- 天氣 banner ---- */
+let weatherState = null;          // 本次 session 抓到的天氣
+let weatherFailed = false;
+function weatherBannerHTML() {
+  if (weatherFailed) {
+    return `<div class="card" id="wbanner"><span class="muted">🌤️ 天氣讀取失敗，手動選場地就好</span></div>`;
+  }
+  if (!weatherState) {
+    return `<div class="card" id="wbanner"><span class="muted">🌤️ 讀取天氣中…</span></div>`;
+  }
+  const w = weatherState;
+  const adv = WEATHER.weatherAdvice(w);
+  const placeLbl = { indoor:'室內', outdoor:'戶外', small:'客廳' }[adv.place];
+  const showApply = adv.place !== energyFilter.place;
+  return `<div class="card" id="wbanner">
+    <div class="row-between">
+      <div><span style="font-size:1.4rem">${w.emoji}</span> <strong>${w.temp}°</strong> ${esc(w.label)} <small class="hint">· ${esc(w.place)}</small></div>
+      ${showApply ? `<button class="btn accent sm" onclick="energyFilter.place='${adv.place}';renderEnergy()">套用：${placeLbl}</button>` : ''}
+    </div>
+    <div class="advice" style="margin-top:8px">💡 ${esc(adv.note)}</div>
+  </div>`;
+}
+async function loadWeatherBanner() {
+  if (weatherState) return;       // 已有就不重抓（30 分鐘內 getWeather 也會用快取）
+  try {
+    weatherState = await WEATHER.getWeather();
+  } catch (e) {
+    weatherFailed = true;
+  }
+  if (currentRoute() === 'energy') {           // 使用者還在放電頁才更新 DOM
+    const el = document.getElementById('wbanner');
+    if (el) el.outerHTML = weatherBannerHTML();
+  }
 }
 function generateActions() {
   const c = child();
