@@ -1,0 +1,219 @@
+/* ===========================================================
+   屁孩偵測器 — 活潑童趣風格
+   =========================================================== */
+:root{
+  --bg:#FFF6E9;
+  --card:#FFFFFF;
+  --ink:#2B2D42;
+  --muted:#8A8FA3;
+  --primary:#FF6B6B;
+  --primary-d:#E85555;
+  --accent:#4ECDC4;
+  --yellow:#FFD93D;
+  --green:#6BCB77;
+  --purple:#A66CFF;
+  --orange:#FF9F45;
+  --line:#F0E6D6;
+  --shadow:0 6px 0 rgba(0,0,0,.08);
+  --radius:24px;
+  font-size:16px;
+}
+
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+html,body{margin:0;padding:0;}
+body{
+  font-family:"Segoe UI Rounded","Nunito","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  background:var(--bg);
+  color:var(--ink);
+  -webkit-font-smoothing:antialiased;
+  overscroll-behavior-y:none;
+}
+
+#app{
+  max-width:480px;
+  margin:0 auto;
+  min-height:100vh;
+  padding:0 16px 110px;
+  position:relative;
+}
+
+/* ---------- 通用 ---------- */
+.btn{
+  border:none;border-radius:999px;cursor:pointer;
+  font-family:inherit;font-weight:800;font-size:1rem;
+  padding:14px 22px;color:#fff;background:var(--primary);
+  box-shadow:0 4px 0 var(--primary-d);transition:transform .06s,box-shadow .06s;
+}
+.btn:active{transform:translateY(3px);box-shadow:0 1px 0 var(--primary-d);}
+.btn.block{width:100%;}
+.btn.ghost{background:#fff;color:var(--ink);box-shadow:0 4px 0 var(--line);border:2px solid var(--line);}
+.btn.accent{background:var(--accent);box-shadow:0 4px 0 #36B3AA;}
+.btn.green{background:var(--green);box-shadow:0 4px 0 #4FA85B;}
+.btn.purple{background:var(--purple);box-shadow:0 4px 0 #8A4FE0;}
+.btn.sm{padding:8px 14px;font-size:.85rem;}
+.btn:disabled{opacity:.5;box-shadow:none;cursor:default;}
+
+.card{
+  background:var(--card);border-radius:var(--radius);
+  padding:18px;margin-bottom:14px;box-shadow:var(--shadow);
+}
+
+.pill{
+  display:inline-flex;align-items:center;gap:4px;
+  padding:4px 12px;border-radius:999px;font-size:.78rem;font-weight:800;
+}
+.pill.easy{background:#E6F8EA;color:#3C9A4E;}
+.pill.normal{background:#FFF3D6;color:#C99700;}
+.pill.hard{background:#FFE3E3;color:#D64545;}
+
+.section-title{font-size:1.15rem;font-weight:900;margin:18px 4px 10px;}
+.muted{color:var(--muted);}
+.center{text-align:center;}
+
+/* ---------- 頂部 ---------- */
+.topbar{
+  display:flex;align-items:center;gap:10px;
+  padding:18px 4px 8px;position:sticky;top:0;background:var(--bg);z-index:20;
+}
+.topbar .back{
+  font-size:1.4rem;background:#fff;border:none;border-radius:14px;
+  width:42px;height:42px;cursor:pointer;box-shadow:0 3px 0 var(--line);
+}
+.topbar h1{font-size:1.3rem;font-weight:900;margin:0;flex:1;}
+.star-badge{
+  background:var(--yellow);color:#7a5b00;font-weight:900;
+  padding:6px 14px;border-radius:999px;box-shadow:0 3px 0 #E0BA00;font-size:.95rem;
+}
+
+/* ---------- 首頁 ---------- */
+.hero{
+  background:linear-gradient(135deg,var(--primary),var(--orange));
+  border-radius:var(--radius);padding:20px;color:#fff;margin-bottom:16px;
+  box-shadow:0 6px 0 rgba(0,0,0,.12);
+}
+.hero h1{margin:0 0 4px;font-size:1.5rem;font-weight:900;}
+.hero .sub{opacity:.95;font-size:.9rem;}
+
+.child-row{display:flex;gap:8px;overflow-x:auto;padding:4px 0 8px;}
+.child-chip{
+  flex:0 0 auto;display:flex;align-items:center;gap:7px;
+  background:#fff;border:3px solid transparent;border-radius:999px;
+  padding:7px 14px 7px 8px;cursor:pointer;font-weight:800;box-shadow:0 3px 0 var(--line);
+}
+.child-chip.active{border-color:var(--ink);}
+.child-chip .dot{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;color:#fff;font-size:.8rem;}
+.child-chip.add{color:var(--muted);}
+
+.summary-card{display:flex;gap:12px;align-items:flex-start;}
+.summary-card .emoji{font-size:2rem;}
+.advice{
+  background:#F3FBFA;border:2px dashed var(--accent);border-radius:18px;
+  padding:12px 14px;margin-top:10px;font-weight:700;color:#2B7A74;font-size:.92rem;
+}
+
+.menu-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:6px;}
+.menu-card{
+  border:none;cursor:pointer;text-align:left;color:#fff;
+  border-radius:var(--radius);padding:18px 16px;font-family:inherit;
+  box-shadow:0 5px 0 rgba(0,0,0,.12);min-height:118px;
+  display:flex;flex-direction:column;justify-content:space-between;
+}
+.menu-card .ico{font-size:2.2rem;}
+.menu-card .lbl{font-weight:900;font-size:1.02rem;line-height:1.2;}
+.menu-card:active{transform:translateY(3px);box-shadow:0 2px 0 rgba(0,0,0,.12);}
+.menu-card.full{grid-column:1 / -1;min-height:80px;flex-direction:row;align-items:center;gap:14px;}
+.menu-card.full .ico{font-size:2rem;}
+
+/* ---------- 選擇器 (chips) ---------- */
+.chip-group{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 4px;}
+.choice{
+  border:2px solid var(--line);background:#fff;border-radius:999px;
+  padding:9px 16px;font-weight:800;font-family:inherit;cursor:pointer;font-size:.92rem;color:var(--ink);
+}
+.choice.on{background:var(--ink);color:#fff;border-color:var(--ink);}
+.field-label{font-weight:900;margin:14px 2px 2px;font-size:.95rem;}
+
+/* ---------- 任務/關卡項目 ---------- */
+.task-item{display:flex;align-items:center;gap:12px;}
+.task-item .n{
+  width:40px;height:40px;border-radius:14px;background:var(--bg);
+  display:grid;place-items:center;font-weight:900;color:var(--primary);flex:0 0 auto;font-size:1.1rem;
+}
+.task-item .body{flex:1;min-width:0;}
+.task-item .body .t{font-weight:900;}
+.task-item .body .d{font-size:.85rem;color:var(--muted);}
+.task-meta{display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap;}
+.metric{font-weight:900;color:var(--accent);}
+
+/* check 圈圈 */
+.check{
+  width:34px;height:34px;border-radius:50%;border:3px solid var(--line);
+  background:#fff;cursor:pointer;flex:0 0 auto;display:grid;place-items:center;
+  font-size:1.1rem;color:#fff;transition:.15s;
+}
+.check.done{background:var(--green);border-color:var(--green);}
+
+/* ---------- 關卡 ---------- */
+.level{display:flex;align-items:center;gap:14px;}
+.level .badge{font-size:2rem;width:54px;height:54px;border-radius:18px;display:grid;place-items:center;background:var(--bg);flex:0 0 auto;}
+.level.locked{opacity:.55;}
+.level.locked .badge{filter:grayscale(1);}
+.progress-wrap{background:#fff;border-radius:999px;height:16px;overflow:hidden;box-shadow:inset 0 2px 4px rgba(0,0,0,.08);}
+.progress-bar{height:100%;background:linear-gradient(90deg,var(--green),var(--accent));border-radius:999px;transition:width .4s;}
+
+/* ---------- 輪盤 ---------- */
+.wheel-stage{min-height:160px;display:grid;place-items:center;}
+.draw-card{
+  background:linear-gradient(135deg,var(--purple),var(--primary));color:#fff;
+  border-radius:20px;padding:18px;margin-bottom:10px;box-shadow:0 5px 0 rgba(0,0,0,.12);
+  animation:pop .3s ease;
+}
+.draw-card .name{font-weight:900;font-size:1.15rem;}
+.draw-card .desc{opacity:.95;font-size:.9rem;margin-top:2px;}
+@keyframes pop{from{transform:scale(.7);opacity:0;}to{transform:scale(1);opacity:1;}}
+.spin{animation:spin .6s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* ---------- 狀態紀錄 ---------- */
+.status-row{margin-bottom:10px;}
+.status-row .lab{font-weight:900;margin-bottom:5px;}
+.week-strip{display:flex;gap:6px;justify-content:space-between;}
+.day-col{flex:1;text-align:center;font-size:.72rem;}
+.day-col .bar{height:60px;display:flex;flex-direction:column-reverse;gap:2px;align-items:center;}
+.day-col .seg{width:14px;border-radius:4px;}
+
+/* textarea/input */
+textarea,input[type=text],input[type=number]{
+  width:100%;border:2px solid var(--line);border-radius:14px;padding:12px;
+  font-family:inherit;font-size:1rem;color:var(--ink);background:#fff;
+}
+textarea{min-height:70px;resize:vertical;}
+
+/* ---------- 完成彈窗 ---------- */
+.modal-mask{
+  position:fixed;inset:0;background:rgba(0,0,0,.4);display:grid;place-items:center;z-index:100;padding:24px;
+  animation:fade .2s;
+}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+.modal{background:#fff;border-radius:var(--radius);padding:28px 24px;text-align:center;max-width:340px;width:100%;animation:pop .3s;}
+.modal .big{font-size:3.5rem;}
+.modal h2{margin:8px 0 4px;font-weight:900;}
+.confetti{font-size:1.6rem;letter-spacing:4px;}
+
+/* 空狀態 */
+.empty{text-align:center;color:var(--muted);padding:40px 20px;}
+.empty .e{font-size:3rem;}
+
+/* 拖曳排序 */
+.flow-step{display:flex;align-items:center;gap:10px;}
+.flow-step .grip{cursor:grab;font-size:1.2rem;color:var(--muted);user-select:none;}
+.flow-step.dragging{opacity:.4;}
+
+/* 浮動星星動畫 */
+.fly-star{position:fixed;font-size:1.6rem;pointer-events:none;z-index:200;animation:fly 1s ease forwards;}
+@keyframes fly{0%{transform:translateY(0) scale(1);opacity:1;}100%{transform:translateY(-120px) scale(1.6);opacity:0;}}
+
+.row-between{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.gap8{height:8px;}
+.gap16{height:16px;}
+small.hint{color:var(--muted);font-size:.8rem;}

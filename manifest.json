@@ -1,0 +1,15 @@
+{
+  "name": "屁孩偵測器 — 小孩任務中心",
+  "short_name": "屁孩偵測器",
+  "description": "幫小孩放電、闖關、養成好習慣的家庭任務 App",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FFF6E9",
+  "theme_color": "#FF6B6B",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
