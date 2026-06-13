@@ -4,28 +4,32 @@
    =========================================================== */
 
 /* ---------- 模組 1：放電動作庫 ----------
-   tags 用來篩選：年齡層 / 場地
+   tags 用來篩選：年齡層 / 場地 / 時段
    age: 4-6 / 7-9 / 10-12
    place: indoor(室內) / outdoor(戶外) / small(客廳小空間)
+   times: morning(早上,偏喚醒) / afternoon(下午,全力) / evening(晚上,偏緩和避免睡前太亢奮)
    difficulty: easy(簡單) / normal(普通) / hard(挑戰)
    duration: 預估秒數，用來湊滿時間
 */
 const ACTION_POOL = [
-  { name: "原地跑步",   desc: "原地用力跑，膝蓋抬高",         metric: "1 分鐘",  difficulty: "easy",   ages: ["4-6","7-9","10-12"], places: ["indoor","outdoor","small"], seconds: 60 },
-  { name: "開合跳",     desc: "雙手雙腳同時打開再合起",       metric: "20 下",   difficulty: "normal", ages: ["7-9","10-12"],       places: ["indoor","outdoor","small"], seconds: 40 },
-  { name: "熊爬",       desc: "手腳著地像熊一樣往前爬",       metric: "30 秒",   difficulty: "normal", ages: ["4-6","7-9","10-12"], places: ["indoor","outdoor","small"], seconds: 30 },
-  { name: "螃蟹走路",   desc: "屁股離地，手腳撐地橫著走",     metric: "30 秒",   difficulty: "hard",   ages: ["7-9","10-12"],       places: ["indoor","outdoor"],          seconds: 30 },
-  { name: "單腳站",     desc: "像小白鶴一樣單腳站好不要倒",   metric: "20 秒",   difficulty: "easy",   ages: ["4-6","7-9","10-12"], places: ["indoor","outdoor","small"], seconds: 20 },
-  { name: "收玩具比賽", desc: "比賽看誰收得快又整齊",         metric: "3 分鐘",  difficulty: "easy",   ages: ["4-6","7-9"],          places: ["indoor","small"],            seconds: 180 },
-  { name: "深蹲",       desc: "屁股往後坐，膝蓋不超過腳尖",   metric: "10 下",   difficulty: "normal", ages: ["7-9","10-12"],       places: ["indoor","outdoor","small"], seconds: 40 },
-  { name: "伸展操",     desc: "慢慢拉拉手、拉拉腳、轉一轉",   metric: "1 分鐘",  difficulty: "easy",   ages: ["4-6","7-9","10-12"], places: ["indoor","outdoor","small"], seconds: 60 },
-  { name: "兔子跳",     desc: "蹲低，雙腳一起往前跳",         metric: "15 下",   difficulty: "easy",   ages: ["4-6","7-9"],          places: ["indoor","outdoor","small"], seconds: 40 },
-  { name: "高抬腿",     desc: "原地把膝蓋輪流抬到肚子高",     metric: "30 秒",   difficulty: "normal", ages: ["7-9","10-12"],       places: ["indoor","outdoor","small"], seconds: 30 },
-  { name: "超人飛",     desc: "趴著把手腳同時抬起來像超人",   metric: "20 秒",   difficulty: "hard",   ages: ["7-9","10-12"],       places: ["indoor","small"],            seconds: 20 },
-  { name: "踏步唱歌",   desc: "一邊原地踏步一邊唱一首歌",     metric: "1 分鐘",  difficulty: "easy",   ages: ["4-6"],                places: ["indoor","small"],            seconds: 60 },
-  { name: "平板撐",     desc: "手肘撐地，身體打直像木板",     metric: "15 秒",   difficulty: "hard",   ages: ["7-9","10-12"],       places: ["indoor","small"],            seconds: 20 },
-  { name: "波比跳",     desc: "蹲下、撐地、跳起來，連續做",   metric: "8 下",    difficulty: "hard",   ages: ["10-12"],              places: ["indoor","outdoor"],          seconds: 60 },
-  { name: "學動物走",   desc: "輪流學鴨子、青蛙、大象走路",   metric: "1 分鐘",  difficulty: "easy",   ages: ["4-6"],                places: ["indoor","outdoor","small"], seconds: 60 },
+  { name: "原地跑步",   desc: "原地用力跑，膝蓋抬高",         metric: "1 分鐘",  difficulty: "easy",   ages: ["4-6","7-9","10-12"], places: ["indoor","outdoor","small"], times: ["morning","afternoon"],            seconds: 60 },
+  { name: "開合跳",     desc: "雙手雙腳同時打開再合起",       metric: "20 下",   difficulty: "normal", ages: ["7-9","10-12"],       places: ["indoor","outdoor","small"], times: ["morning","afternoon"],            seconds: 40 },
+  { name: "熊爬",       desc: "手腳著地像熊一樣往前爬",       metric: "30 秒",   difficulty: "normal", ages: ["4-6","7-9","10-12"], places: ["indoor","outdoor","small"], times: ["morning","afternoon","evening"],  seconds: 30 },
+  { name: "螃蟹走路",   desc: "屁股離地，手腳撐地橫著走",     metric: "30 秒",   difficulty: "hard",   ages: ["7-9","10-12"],       places: ["indoor","outdoor"],          times: ["morning","afternoon","evening"],  seconds: 30 },
+  { name: "單腳站",     desc: "像小白鶴一樣單腳站好不要倒",   metric: "20 秒",   difficulty: "easy",   ages: ["4-6","7-9","10-12"], places: ["indoor","outdoor","small"], times: ["morning","afternoon","evening"],  seconds: 20 },
+  { name: "收玩具比賽", desc: "比賽看誰收得快又整齊",         metric: "3 分鐘",  difficulty: "easy",   ages: ["4-6","7-9"],          places: ["indoor","small"],            times: ["afternoon","evening"],            seconds: 180 },
+  { name: "深蹲",       desc: "屁股往後坐，膝蓋不超過腳尖",   metric: "10 下",   difficulty: "normal", ages: ["7-9","10-12"],       places: ["indoor","outdoor","small"], times: ["morning","afternoon"],            seconds: 40 },
+  { name: "伸展操",     desc: "慢慢拉拉手、拉拉腳、轉一轉",   metric: "1 分鐘",  difficulty: "easy",   ages: ["4-6","7-9","10-12"], places: ["indoor","outdoor","small"], times: ["morning","afternoon","evening"],  seconds: 60 },
+  { name: "兔子跳",     desc: "蹲低，雙腳一起往前跳",         metric: "15 下",   difficulty: "easy",   ages: ["4-6","7-9"],          places: ["indoor","outdoor","small"], times: ["morning","afternoon"],            seconds: 40 },
+  { name: "高抬腿",     desc: "原地把膝蓋輪流抬到肚子高",     metric: "30 秒",   difficulty: "normal", ages: ["7-9","10-12"],       places: ["indoor","outdoor","small"], times: ["morning","afternoon"],            seconds: 30 },
+  { name: "超人飛",     desc: "趴著把手腳同時抬起來像超人",   metric: "20 秒",   difficulty: "hard",   ages: ["7-9","10-12"],       places: ["indoor","small"],            times: ["morning","afternoon","evening"],  seconds: 20 },
+  { name: "踏步唱歌",   desc: "一邊原地踏步一邊唱一首歌",     metric: "1 分鐘",  difficulty: "easy",   ages: ["4-6"],                places: ["indoor","small"],            times: ["morning","afternoon"],            seconds: 60 },
+  { name: "平板撐",     desc: "手肘撐地，身體打直像木板",     metric: "15 秒",   difficulty: "hard",   ages: ["7-9","10-12"],       places: ["indoor","small"],            times: ["morning","afternoon","evening"],  seconds: 20 },
+  { name: "波比跳",     desc: "蹲下、撐地、跳起來，連續做",   metric: "8 下",    difficulty: "hard",   ages: ["10-12"],              places: ["indoor","outdoor"],          times: ["morning","afternoon"],            seconds: 60 },
+  { name: "學動物走",   desc: "輪流學鴨子、青蛙、大象走路",   metric: "1 分鐘",  difficulty: "easy",   ages: ["4-6"],                places: ["indoor","outdoor","small"], times: ["morning","afternoon","evening"],  seconds: 60 },
+  { name: "深呼吸放鬆", desc: "慢慢吸氣 4 秒、吐氣 4 秒，重複",metric: "1 分鐘",  difficulty: "easy",   ages: ["4-6","7-9","10-12"], places: ["indoor","outdoor","small"], times: ["evening"],                        seconds: 60 },
+  { name: "貓牛伸展",   desc: "四足跪姿，背部一拱一凹慢慢做", metric: "1 分鐘",  difficulty: "easy",   ages: ["4-6","7-9","10-12"], places: ["indoor","small"],            times: ["evening"],                        seconds: 60 },
+  { name: "睡前抱膝",   desc: "躺著抱住膝蓋輕輕左右搖",       metric: "30 秒",   difficulty: "easy",   ages: ["4-6","7-9","10-12"], places: ["indoor","small"],            times: ["evening"],                        seconds: 30 },
 ];
 
 /* ---------- 模組 2：體能闖關 ----------

@@ -301,7 +301,15 @@ function delChild(id) {
 /* ===========================================================
    模組 1：今日放電任務
    =========================================================== */
-let energyFilter = { place:'indoor', minutes:10 };
+// 依現在時間判斷時段：05–11 早上、11–17 下午、其餘晚上
+function currentTimeOfDay() {
+  const h = new Date().getHours();
+  if (h >= 5 && h < 11) return 'morning';
+  if (h >= 11 && h < 17) return 'afternoon';
+  return 'evening';
+}
+const TIME_LABEL = { morning:'早上', afternoon:'下午', evening:'晚上' };
+let energyFilter = { place:'indoor', minutes:10, time: currentTimeOfDay() };
 function renderEnergy() {
   const cd = cdata();
   const c = child();
@@ -310,8 +318,13 @@ function renderEnergy() {
 
   const placeBtns = [['indoor','室內 🏠'],['outdoor','戶外 🌳'],['small','客廳小空間 🛋️']]
     .map(([v,l]) => `<button class="choice ${energyFilter.place===v?'on':''}" onclick="energyFilter.place='${v}';renderEnergy()">${l}</button>`).join('');
+  const timeBtns = [['morning','早上 🌅'],['afternoon','下午 ☀️'],['evening','晚上 🌙']]
+    .map(([v,l]) => `<button class="choice ${energyFilter.time===v?'on':''}" onclick="energyFilter.time='${v}';renderEnergy()">${l}</button>`).join('');
   const minBtns = [5,10,15]
     .map(m => `<button class="choice ${energyFilter.minutes===m?'on':''}" onclick="energyFilter.minutes=${m};renderEnergy()">${m} 分鐘</button>`).join('');
+  const timeHint = energyFilter.time==='evening' ? '🌙 晚上會自動選緩和的動作，幫助好入睡'
+                 : energyFilter.time==='morning' ? '🌅 早上偏喚醒型動作，幫身體開機'
+                 : '☀️ 下午活力全開，什麼都能玩';
 
   let taskHtml;
   if (has) {
@@ -343,10 +356,13 @@ function renderEnergy() {
     ${topbar('今日放電任務')}
     <div class="card">
       <div class="field-label">年齡層</div><div class="muted" style="font-size:.85rem">目前小孩：${esc(c.name)}（${c.age} 歲）</div>
+      <div class="field-label">時段</div>
+      <div class="chip-group">${timeBtns}</div>
       <div class="field-label">場地</div>
       <div class="chip-group">${placeBtns}</div>
-      <div class="field-label">時間</div>
+      <div class="field-label">時間長度</div>
       <div class="chip-group">${minBtns}</div>
+      <small class="hint" style="display:block;margin-top:8px">${timeHint}</small>
     </div>
     ${taskHtml}
   `;
@@ -354,8 +370,14 @@ function renderEnergy() {
 function generateActions() {
   const c = child();
   const budget = energyFilter.minutes * 60;
-  let pool = D.ACTION_POOL.filter(a => a.ages.includes(c.age) && a.places.includes(energyFilter.place));
-  if (pool.length < 3) pool = D.ACTION_POOL.filter(a => a.places.includes(energyFilter.place));
+  const inAge = a => a.ages.includes(c.age);
+  const inPlace = a => a.places.includes(energyFilter.place);
+  const inTime = a => a.times.includes(energyFilter.time);
+  // 逐步放寬條件，確保至少有 3 個動作可選
+  let pool = D.ACTION_POOL.filter(a => inAge(a) && inPlace(a) && inTime(a));
+  if (pool.length < 3) pool = D.ACTION_POOL.filter(a => inPlace(a) && inTime(a));
+  if (pool.length < 3) pool = D.ACTION_POOL.filter(a => inAge(a) && inPlace(a));
+  if (pool.length < 3) pool = D.ACTION_POOL.filter(a => inPlace(a));
   pool = sample(pool, pool.length); // 打散
   const chosen = [];
   let total = 0;
