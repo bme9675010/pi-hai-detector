@@ -238,20 +238,24 @@ function renderChildren() {
     <button class="btn block accent" onclick="editChild(null)">＋ 新增小孩</button>
   `;
 }
+let childModalEl = null;
 function editChild(id) {
+  // 只在「開啟」時初始化一次 childForm，避免之後重繪時被洗掉
   const ch = id ? state.children.find(c=>c.id===id) : { id:null, name:'', age:'7-9', color:D.CHILD_COLORS[0] };
   childForm = { ...ch };
+  childModalEl = modal(childModalInner());
+}
+function childModalInner() {
   const colors = D.CHILD_COLORS.map(col =>
     `<button class="choice" style="background:${col};width:38px;height:38px;border-radius:50%;padding:0;border:3px solid ${col===childForm.color?'#2B2D42':'transparent'}"
-      onclick="childForm.color='${col}';editChildRender()"></button>`).join('');
+      onclick="childForm.color='${col}';childFormRefresh()"></button>`).join('');
   const ages = ['4-6','7-9','10-12'].map(a =>
-    `<button class="choice ${childForm.age===a?'on':''}" onclick="childForm.age='${a}';editChildRender()">${a} 歲</button>`).join('');
-
-  const m = modal(`
-    <h2>${id?'編輯小孩':'新增小孩'}</h2>
+    `<button class="choice ${childForm.age===a?'on':''}" onclick="childForm.age='${a}';childFormRefresh()">${a} 歲</button>`).join('');
+  return `
+    <h2>${childForm.id?'編輯小孩':'新增小孩'}</h2>
     <div style="text-align:left">
       <div class="field-label">名字</div>
-      <input type="text" id="cf-name" value="${esc(childForm.name)}" placeholder="例如：小明" maxlength="6" />
+      <input type="text" id="cf-name" value="${esc(childForm.name)}" placeholder="例如：小明" maxlength="6" oninput="childForm.name=this.value" />
       <div class="field-label">年齡層</div>
       <div class="chip-group" id="cf-ages">${ages}</div>
       <div class="field-label">代表顏色</div>
@@ -261,15 +265,13 @@ function editChild(id) {
     <button class="btn block green" onclick="saveChild()">儲存</button>
     <div class="gap8"></div>
     <button class="btn block ghost" onclick="this.closest('.modal-mask').remove()">取消</button>
-  `);
-  m.dataset.id = id || '';
+  `;
 }
-function editChildRender() {
-  // 重新渲染 modal 內容以反映顏色/年齡選擇
-  document.querySelector('.modal-mask')?.remove();
-  const nameVal = childForm.name;
-  editChild(childForm.id);
-  const inp = document.getElementById('cf-name'); if (inp) inp.value = nameVal;
+function childFormRefresh() {
+  // 先把目前輸入框的名字存回 childForm，再重繪 modal 內容（保留選取狀態）
+  const inp = document.getElementById('cf-name'); if (inp) childForm.name = inp.value;
+  const box = childModalEl && childModalEl.querySelector('.modal');
+  if (box) box.innerHTML = childModalInner();
 }
 function saveChild() {
   const name = (document.getElementById('cf-name').value || '').trim() || '寶貝';

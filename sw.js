@@ -1,5 +1,5 @@
 /* 屁孩偵測器 Service Worker — 離線快取 */
-const CACHE = 'pi-hai-v1';
+const CACHE = 'pi-hai-v2';
 const ASSETS = [
   './', './index.html', './styles.css', './data.js', './app.js',
   './manifest.json', './icon.svg'
@@ -16,13 +16,15 @@ self.addEventListener('activate', e => {
   );
 });
 
+// network-first：有網路就拿最新版並更新快取，離線時才用快取。
+// 這樣每次部署新版本，使用者一開 App 就會拿到更新。
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   e.respondWith(
-    caches.match(e.request).then(cached => cached || fetch(e.request).then(res => {
+    fetch(e.request).then(res => {
       const copy = res.clone();
       caches.open(CACHE).then(c => c.put(e.request, copy)).catch(()=>{});
       return res;
-    }).catch(() => cached))
+    }).catch(() => caches.match(e.request))
   );
 });
