@@ -384,7 +384,7 @@ function weatherBannerHTML() {
   const adv = WEATHER.weatherAdvice(w);
   const placeLbl = { indoor:'室內', outdoor:'戶外', small:'客廳' }[adv.place];
   const showApply = adv.place !== energyFilter.place;
-  const isDefault = w.place && w.place.indexOf('預設') >= 0;
+  const isDefault = w.isDefault || (w.place && w.place.indexOf('預設') >= 0);
   return `<div class="card" id="wbanner">
     <div class="row-between">
       <div><span style="font-size:1.4rem">${w.emoji}</span> <strong>${w.temp}°</strong> ${esc(w.label)}

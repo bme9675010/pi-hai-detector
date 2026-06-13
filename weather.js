@@ -37,17 +37,32 @@ function weatherAdvice(w) {
    fresh=true 時強制重新定位（不吃位置快取），逾時拉長給使用者時間按「允許」 */
 function getCoords(fresh) {
   return new Promise(resolve => {
-    if (!navigator.geolocation) return resolve(DEFAULT_COORDS);
+    if (!navigator.geolocation) return resolve({ ...DEFAULT_COORDS, isDefault: true });
     navigator.geolocation.getCurrentPosition(
-      p => resolve({ lat: p.coords.latitude, lon: p.coords.longitude, name: '你的位置' }),
-      () => resolve(DEFAULT_COORDS),
+      p => resolve({ lat: p.coords.latitude, lon: p.coords.longitude, isDefault: false }),
+      () => resolve({ ...DEFAULT_COORDS, isDefault: true }),
       { timeout: 15000, maximumAge: fresh ? 0 : WEATHER_TTL }
     );
   });
 }
 
+/* 反向地理編碼：座標 → 地名（BigDataCloud，免費、免 key、可瀏覽器直接呼叫） */
+async function reverseName(lat, lon) {
+  try {
+    const r = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=zh`);
+    const j = await r.json();
+    // 台灣：縣市(principalSubdivision) + 行政區(locality)，例如「新北市 板橋區」
+    const parts = [j.principalSubdivision, j.locality || j.city].filter(Boolean);
+    const name = [...new Set(parts)].join(' ').trim();
+    return name || '你的位置';
+  } catch (e) {
+    return '你的位置';
+  }
+}
+
 async function fetchWeather(fresh) {
   const co = await getCoords(fresh);
+  const name = co.isDefault ? '台北（預設）' : await reverseName(co.lat, co.lon);
   const url = `https://api.open-meteo.com/v1/forecast?latitude=${co.lat}&longitude=${co.lon}&current=temperature_2m,weather_code&timezone=auto`;
   const res = await fetch(url);
   if (!res.ok) throw new Error('weather http ' + res.status);
@@ -59,23 +74,31 @@ async function fetchWeather(fresh) {
     code: cur.weather_code,
     emoji: info.emoji,
     label: info.label,
-    place: co.name,
+    place: name,
+    isDefault: co.isDefault,
     ts: Date.now()
   };
 }
 
-/* 對外：取得天氣（優先用 30 分鐘內的快取）
-   force=true 時清快取並強制重新定位 */
+/* 對外：取得天氣
+   - 有「真實位置」的 30 分鐘內快取才沿用
+   - 若快取是預設值（沒定位成功），自動重試定位，不卡在預設
+   - force=true 強制重新定位 */
 async function getWeather(force) {
   try {
     const raw = localStorage.getItem(WEATHER_KEY);
     if (!force && raw) {
       const cached = JSON.parse(raw);
-      if (Date.now() - cached.ts < WEATHER_TTL) return cached;
+      if (!cached.isDefault && Date.now() - cached.ts < WEATHER_TTL) return cached;
     }
   } catch (e) {}
   const w = await fetchWeather(force);
-  try { localStorage.setItem(WEATHER_KEY, JSON.stringify(w)); } catch (e) {}
+  // 只快取抓到真實位置的結果；預設值不快取，下次進來會再試一次定位
+  if (!w.isDefault) {
+    try { localStorage.setItem(WEATHER_KEY, JSON.stringify(w)); } catch (e) {}
+  } else {
+    try { localStorage.removeItem(WEATHER_KEY); } catch (e) {}
+  }
   return w;
 }
 
