@@ -46,14 +46,25 @@ function getCoords(fresh) {
   });
 }
 
-/* 反向地理編碼：座標 → 地名（BigDataCloud，免費、免 key、可瀏覽器直接呼叫） */
+/* 反向地理編碼：座標 → 地名（縣市 + 行政區，例如「桃園市 桃園區」）
+   主：OSM Nominatim（台灣行政區到「區」較完整）；後備：BigDataCloud */
 async function reverseName(lat, lon) {
+  // 主：Nominatim
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&accept-language=zh-TW`);
+    if (r.ok) {
+      const a = (await r.json()).address || {};
+      const city = a.city || a.county || a.state;          // 縣市
+      const dist = a.town || a.city_district || a.district || a.suburb; // 行政區
+      const name = [...new Set([city, dist].filter(Boolean))].join(' ').trim();
+      if (name) return name;
+    }
+  } catch (e) {}
+  // 後備：BigDataCloud
   try {
     const r = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=zh`);
     const j = await r.json();
-    // 台灣：縣市(principalSubdivision) + 行政區(locality)，例如「新北市 板橋區」
-    const parts = [j.principalSubdivision, j.locality || j.city].filter(Boolean);
-    const name = [...new Set(parts)].join(' ').trim();
+    const name = [...new Set([j.principalSubdivision, j.locality || j.city].filter(Boolean))].join(' ').trim();
     return name || '你的位置';
   } catch (e) {
     return '你的位置';
