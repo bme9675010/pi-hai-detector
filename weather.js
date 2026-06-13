@@ -33,20 +33,21 @@ function weatherAdvice(w) {
   return { place:'outdoor', note:'天氣不錯，很適合到戶外放電 🌳' };
 }
 
-/* 取得座標：先試 GPS，失敗/拒絕就用預設 */
-function getCoords() {
+/* 取得座標：先試 GPS，失敗/拒絕就用預設
+   fresh=true 時強制重新定位（不吃位置快取），逾時拉長給使用者時間按「允許」 */
+function getCoords(fresh) {
   return new Promise(resolve => {
     if (!navigator.geolocation) return resolve(DEFAULT_COORDS);
     navigator.geolocation.getCurrentPosition(
       p => resolve({ lat: p.coords.latitude, lon: p.coords.longitude, name: '你的位置' }),
       () => resolve(DEFAULT_COORDS),
-      { timeout: 6000, maximumAge: WEATHER_TTL }
+      { timeout: 15000, maximumAge: fresh ? 0 : WEATHER_TTL }
     );
   });
 }
 
-async function fetchWeather() {
-  const co = await getCoords();
+async function fetchWeather(fresh) {
+  const co = await getCoords(fresh);
   const url = `https://api.open-meteo.com/v1/forecast?latitude=${co.lat}&longitude=${co.lon}&current=temperature_2m,weather_code&timezone=auto`;
   const res = await fetch(url);
   if (!res.ok) throw new Error('weather http ' + res.status);
@@ -63,7 +64,8 @@ async function fetchWeather() {
   };
 }
 
-/* 對外：取得天氣（優先用 30 分鐘內的快取） */
+/* 對外：取得天氣（優先用 30 分鐘內的快取）
+   force=true 時清快取並強制重新定位 */
 async function getWeather(force) {
   try {
     const raw = localStorage.getItem(WEATHER_KEY);
@@ -72,7 +74,7 @@ async function getWeather(force) {
       if (Date.now() - cached.ts < WEATHER_TTL) return cached;
     }
   } catch (e) {}
-  const w = await fetchWeather();
+  const w = await fetchWeather(force);
   try { localStorage.setItem(WEATHER_KEY, JSON.stringify(w)); } catch (e) {}
   return w;
 }

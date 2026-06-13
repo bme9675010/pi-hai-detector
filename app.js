@@ -384,12 +384,18 @@ function weatherBannerHTML() {
   const adv = WEATHER.weatherAdvice(w);
   const placeLbl = { indoor:'室內', outdoor:'戶外', small:'客廳' }[adv.place];
   const showApply = adv.place !== energyFilter.place;
+  const isDefault = w.place && w.place.indexOf('預設') >= 0;
   return `<div class="card" id="wbanner">
     <div class="row-between">
-      <div><span style="font-size:1.4rem">${w.emoji}</span> <strong>${w.temp}°</strong> ${esc(w.label)} <small class="hint">· ${esc(w.place)}</small></div>
+      <div><span style="font-size:1.4rem">${w.emoji}</span> <strong>${w.temp}°</strong> ${esc(w.label)}
+        <small class="hint">· ${esc(w.place)}</small></div>
       ${showApply ? `<button class="btn accent sm" onclick="energyFilter.place='${adv.place}';renderEnergy()">套用：${placeLbl}</button>` : ''}
     </div>
     <div class="advice" style="margin-top:8px">💡 ${esc(adv.note)}</div>
+    <div style="margin-top:8px">
+      <button class="btn ghost sm" onclick="relocateWeather()">📍 ${isDefault ? '用我的實際位置' : '重新定位'}</button>
+      ${isDefault ? `<small class="hint"> 目前顯示預設地區</small>` : ''}
+    </div>
   </div>`;
 }
 async function loadWeatherBanner() {
@@ -403,6 +409,21 @@ async function loadWeatherBanner() {
     const el = document.getElementById('wbanner');
     if (el) el.outerHTML = weatherBannerHTML();
   }
+}
+// 手動重新定位：清快取、重置狀態、強制重新取得 GPS
+function relocateWeather() {
+  try { localStorage.removeItem('pi_hai_weather_v1'); } catch (e) {}
+  weatherState = null; weatherFailed = false;
+  const el = document.getElementById('wbanner');
+  if (el) el.innerHTML = '<span class="muted">📍 重新定位中…（請按「允許」）</span>';
+  (async () => {
+    try { weatherState = await WEATHER.getWeather(true); }
+    catch (e) { weatherFailed = true; }
+    if (currentRoute() === 'energy') {
+      const el2 = document.getElementById('wbanner');
+      if (el2) el2.outerHTML = weatherBannerHTML();
+    }
+  })();
 }
 function generateActions() {
   const c = child();
