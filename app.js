@@ -140,8 +140,8 @@ function renderHome() {
 
   $app.innerHTML = `
     <div class="hero">
-      <h1>小孩任務中心</h1>
-      <div class="sub">屁孩偵測器 · 今天也要好好放電 💥</div>
+      <h1>屁孩特攻隊</h1>
+      <div class="sub">除了吃，今天也要好好放電 💥</div>
     </div>
 
     <div class="child-row">${childChips}</div>
