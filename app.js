@@ -146,6 +146,8 @@ function renderHome() {
 
     <div class="child-row">${childChips}</div>
 
+    ${homeWeatherHTML()}
+
     <div class="card summary-card">
       <div class="emoji">${summaryText.emoji}</div>
       <div style="flex:1">
@@ -168,6 +170,21 @@ function renderHome() {
     <div class="gap16"></div>
     <p class="center"><small class="hint">資料只存在這支手機 · 不做任何醫療診斷</small></p>
   `;
+  loadWeather();   // 首頁也載入天氣
+}
+
+/* 首頁用的精簡天氣條 */
+function homeWeatherHTML() {
+  if (weatherFailed) return `<div id="home-weather"></div>`;   // 失敗就不顯示，保持首頁乾淨
+  if (!weatherState) return `<div id="home-weather" class="card" style="padding:12px 16px"><span class="muted">🌤️ 讀取天氣中…</span></div>`;
+  const w = weatherState;
+  return `<div id="home-weather" class="card" style="padding:12px 16px">
+    <div class="row-between">
+      <div><span style="font-size:1.2rem">${w.emoji}</span> <strong>${w.temp}°</strong> ${esc(w.label)}
+        <small class="hint">· ${esc(w.place)}</small></div>
+      <button class="btn ghost sm" onclick="go('energy')">去放電 →</button>
+    </div>
+  </div>`;
 }
 
 /* 依最近狀態產生摘要 + 建議（只做生活觀察） */
@@ -367,7 +384,7 @@ function renderEnergy() {
     </div>
     ${taskHtml}
   `;
-  loadWeatherBanner();   // 非同步抓天氣，回來後只更新天氣那塊
+  loadWeather();   // 非同步抓天氣，回來後只更新天氣那塊
 }
 
 /* ---- 天氣 banner ---- */
@@ -398,17 +415,17 @@ function weatherBannerHTML() {
     </div>
   </div>`;
 }
-async function loadWeatherBanner() {
-  if (weatherState) return;       // 已有就不重抓（30 分鐘內 getWeather 也會用快取）
-  try {
-    weatherState = await WEATHER.getWeather();
-  } catch (e) {
-    weatherFailed = true;
-  }
-  if (currentRoute() === 'energy') {           // 使用者還在放電頁才更新 DOM
-    const el = document.getElementById('wbanner');
-    if (el) el.outerHTML = weatherBannerHTML();
-  }
+// 天氣回來後，依目前頁面更新對應的 DOM（首頁 or 放電頁）
+function refreshWeatherDOM() {
+  const r = currentRoute();
+  if (r === 'energy') { const el = document.getElementById('wbanner'); if (el) el.outerHTML = weatherBannerHTML(); }
+  else if (r === 'home') { const el = document.getElementById('home-weather'); if (el) el.outerHTML = homeWeatherHTML(); }
+}
+async function loadWeather() {
+  if (weatherState || weatherFailed) { refreshWeatherDOM(); return; }  // 已有結果就直接套用
+  try { weatherState = await WEATHER.getWeather(); }
+  catch (e) { weatherFailed = true; }
+  refreshWeatherDOM();
 }
 // 手動重新定位：清快取、重置狀態、強制重新取得 GPS
 function relocateWeather() {
@@ -419,10 +436,7 @@ function relocateWeather() {
   (async () => {
     try { weatherState = await WEATHER.getWeather(true); }
     catch (e) { weatherFailed = true; }
-    if (currentRoute() === 'energy') {
-      const el2 = document.getElementById('wbanner');
-      if (el2) el2.outerHTML = weatherBannerHTML();
-    }
+    refreshWeatherDOM();
   })();
 }
 function generateActions() {
