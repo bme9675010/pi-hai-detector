@@ -79,10 +79,20 @@ const STATUS_FIELDS = [
   { key: "activity", label: "活動量", emoji: "🏃", options: ["不足","剛好","太多"] },
 ];
 
+/* ---------- 星星兌換獎勵（家長可自訂） ---------- */
+const DEFAULT_REWARDS = [
+  { name: "看卡通 30 分鐘", cost: 10, emoji: "📺" },
+  { name: "挑一個點心",     cost: 8,  emoji: "🍪" },
+  { name: "玩遊戲 20 分鐘", cost: 15, emoji: "🎮" },
+  { name: "晚睡 15 分鐘",   cost: 20, emoji: "🌙" },
+  { name: "選今天的晚餐",   cost: 25, emoji: "🍜" },
+  { name: "去公園玩",       cost: 30, emoji: "🛝" },
+];
+
 /* 小孩顏色選項 */
 const CHILD_COLORS = ["#FF6B6B","#4ECDC4","#FFD93D","#6BCB77","#A66CFF","#FF9F45","#5C7CFA","#FF6FB5"];
 
 window.APP_DATA = {
   ACTION_POOL, DEFAULT_LEVELS, LEVEL_TYPE_LABEL,
-  DEFAULT_FLOWS, DEFAULT_CHORES, STATUS_FIELDS, CHILD_COLORS
+  DEFAULT_FLOWS, DEFAULT_CHORES, STATUS_FIELDS, CHILD_COLORS, DEFAULT_REWARDS
 };

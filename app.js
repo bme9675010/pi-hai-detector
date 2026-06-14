@@ -46,8 +46,17 @@ function blankChildData() {
       night:   { ...D.DEFAULT_FLOWS.night,   steps: D.DEFAULT_FLOWS.night.steps.map(s=>({id:uid(),text:s})), checked:{}, date:'' },
     })),
     chores: { date:'', drawn:[], doneIds:[] },
-    status: {}                // status[date] = {spirit, mood, ...}
+    status: {},               // status[date] = {spirit, mood, ...}
+    redeemLog: []             // 兌換紀錄 [{name, cost, date}]
   };
+}
+/* 確保獎勵清單存在（相容舊版資料） */
+function ensureRewards() {
+  if (!Array.isArray(state.rewards)) {
+    state.rewards = D.DEFAULT_REWARDS.map(r => ({ id: uid(), ...r }));
+    save();
+  }
+  return state.rewards;
 }
 function save() { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
 
@@ -57,6 +66,7 @@ function cdata() {
   const id = state.activeChild;
   if (!state.data[id]) state.data[id] = blankChildData();
   if (state.stars[id] == null) state.stars[id] = 0;
+  if (!Array.isArray(state.data[id].redeemLog)) state.data[id].redeemLog = [];  // 相容舊資料
   return state.data[id];
 }
 function addStars(n, ev) {
@@ -135,7 +145,8 @@ function renderHome() {
     { r:'chores',  ico:'🎡', lbl:'家事任務輪盤', bg:'linear-gradient(135deg,#6BCB77,#4ECDC4)' },
   ].map(m => `
     <button class="menu-card" style="background:${m.bg}" onclick="go('${m.r}')">
-      <span class="ico">${m.ico}</span><span class="lbl">${m.lbl}</span>
+      <span class="ico">${m.ico}</span>
+      <span><span class="lbl">${m.lbl}</span><br><span class="st">${cardStatus(m.r)}</span></span>
     </button>`).join('');
 
   $app.innerHTML = `
@@ -164,7 +175,13 @@ function renderHome() {
       ${menu}
       <button class="menu-card full" style="background:linear-gradient(135deg,#FFD93D,#FF9F45);color:#5a4500"
         onclick="go('status')">
-        <span class="ico">📝</span><span class="lbl">今日狀態紀錄</span>
+        <span class="ico">📝</span>
+        <span><span class="lbl">今日狀態紀錄</span><br><span class="st">${cardStatus('status')}</span></span>
+      </button>
+      <button class="menu-card full" style="background:linear-gradient(135deg,#FF6FB5,#A66CFF)"
+        onclick="go('rewards')">
+        <span class="ico">🎁</span>
+        <span><span class="lbl">星星兌換商店</span><br><span class="st">目前 ⭐ ${stars} 顆</span></span>
       </button>
     </div>
     <div class="gap16"></div>
@@ -185,6 +202,31 @@ function homeWeatherHTML() {
       <button class="btn ghost sm" onclick="go('energy')">去放電 →</button>
     </div>
   </div>`;
+}
+
+/* 首頁卡片：今天各任務的完成狀態小字 */
+function cardStatus(r) {
+  const cd = cdata();
+  const t = todayStr();
+  if (r === 'energy') {
+    if (cd.energyToday && cd.energyToday.date === t && cd.energyToday.rewarded) return '今天已完成 ✓';
+    if (cd.energyToday && cd.energyToday.date === t) return '進行中…';
+    return '今天還沒放電';
+  }
+  if (r === 'levels') {
+    const done = cd.levels.filter(l => l.done).length;
+    return `闖關 ${done}/${cd.levels.length}`;
+  }
+  if (r === 'flows') {
+    const allDone = f => f.date === t && f.steps.length && f.steps.every(s => f.checked[s.id]);
+    return `晨${allDone(cd.flows.morning) ? '✓' : '○'}　睡${allDone(cd.flows.night) ? '✓' : '○'}`;
+  }
+  if (r === 'chores') {
+    if (cd.chores.date === t && cd.chores.drawn.length) return `家事 ${cd.chores.doneIds.length}/${cd.chores.drawn.length}`;
+    return '今天還沒抽';
+  }
+  if (r === 'status') return cd.status[t] ? '今天已記錄 ✓' : '今天還沒記錄';
+  return '';
 }
 
 /* 依最近狀態產生摘要 + 建議（只做生活觀察） */
@@ -757,6 +799,79 @@ function toggleChore(idx, ev) {
 }
 
 /* ===========================================================
+   星星兌換商店
+   =========================================================== */
+function renderRewards() {
+  const rewards = ensureRewards();
+  const cd = cdata();
+  const stars = state.stars[state.activeChild] || 0;
+
+  const list = rewards.length ? rewards.map(r => {
+    const can = stars >= r.cost;
+    return `<div class="card task-item">
+      <span class="n" style="background:var(--bg)">${r.emoji || '🎁'}</span>
+      <div class="body">
+        <div class="t">${esc(r.name)}</div>
+        <div class="d"><span class="metric">⭐ ${r.cost}</span> ${can ? '' : `· 還差 ${r.cost - stars} 顆`}</div>
+      </div>
+      <button class="btn ${can?'green':'ghost'} sm" ${can?'':'disabled'} onclick="redeemReward('${r.id}',event)">兌換</button>
+      <button class="btn ghost sm" onclick="delReward('${r.id}')">🗑️</button>
+    </div>`;
+  }).join('') : '<div class="empty"><div class="e">🎁</div>還沒有獎勵，在下面新增一個吧</div>';
+
+  const log = cd.redeemLog.slice(-5).reverse().map(l =>
+    `<div class="row-between" style="font-size:.85rem;padding:4px 2px">
+      <span>${esc(l.name)}</span><span class="muted">${l.date} · ⭐${l.cost}</span>
+    </div>`).join('');
+
+  $app.innerHTML = `
+    ${topbar('星星兌換')}
+    <div class="card center" style="background:linear-gradient(135deg,#FFD93D,#FF9F45);color:#5a4500">
+      <div style="font-size:.9rem;font-weight:800">${esc(child().name)} 目前有</div>
+      <div style="font-size:2.4rem;font-weight:900">⭐ ${stars}</div>
+    </div>
+    ${list}
+    <div class="section-title">家長設定：新增獎勵</div>
+    <div class="card">
+      <input type="text" id="rw-name" placeholder="獎勵名稱，例如：看卡通 30 分鐘" maxlength="20" />
+      <div class="gap8"></div>
+      <div class="row-between">
+        <input type="number" id="rw-cost" placeholder="需要幾顆星" min="1" style="flex:1" />
+        <button class="btn accent" onclick="addReward()">＋ 新增</button>
+      </div>
+    </div>
+    ${log ? `<div class="section-title">最近兌換</div><div class="card">${log}</div>` : ''}
+  `;
+}
+function redeemReward(id, ev) {
+  const r = ensureRewards().find(x => x.id === id);
+  if (!r) return;
+  const stars = state.stars[state.activeChild] || 0;
+  if (stars < r.cost) return;
+  if (!confirm(`用 ${r.cost} 顆星星兌換「${r.name}」嗎？`)) return;
+  state.stars[state.activeChild] = stars - r.cost;
+  cdata().redeemLog.push({ name: r.name, cost: r.cost, date: todayStr() });
+  save();
+  if (ev) flyStars(ev, 3);
+  modal(`<div class="big">${r.emoji || '🎁'}</div><h2>兌換成功！</h2>
+    <p class="muted">「${esc(r.name)}」<br>剩下 ⭐ ${state.stars[state.activeChild]} 顆</p>
+    <button class="btn block green" onclick="this.closest('.modal-mask').remove()">耶！</button>`);
+  renderRewards();
+}
+function addReward() {
+  const name = (document.getElementById('rw-name').value || '').trim();
+  const cost = parseInt(document.getElementById('rw-cost').value, 10);
+  if (!name || !cost || cost < 1) { alert('請輸入獎勵名稱和需要的星星數'); return; }
+  ensureRewards().push({ id: uid(), name, cost, emoji: '🎁' });
+  save(); renderRewards();
+}
+function delReward(id) {
+  if (!confirm('刪除這個獎勵？')) return;
+  state.rewards = ensureRewards().filter(r => r.id !== id);
+  save(); renderRewards();
+}
+
+/* ===========================================================
    模組 3：今日狀態紀錄
    =========================================================== */
 function renderStatus() {
@@ -772,21 +887,31 @@ function renderStatus() {
       </div>
     </div>`).join('');
 
-  // 最近 7 天摘要（活動量視覺化）
+  // 最近 7 天摘要（精神 / 心情 / 活動量 點陣）
   const dates = lastNDates(7).reverse();
-  const actMap = { '不足':1, '剛好':2, '太多':3 };
-  const actColor = { '不足':'#FFB4B4', '剛好':'#6BCB77', '太多':'#FF9F45' };
-  const strip = dates.map(d => {
-    const s = cd.status[d];
-    const lvl = s && s.activity ? actMap[s.activity] : 0;
-    const col = s && s.activity ? actColor[s.activity] : '#eee';
-    const h = lvl ? lvl*16+8 : 6;
-    const wd = ['日','一','二','三','四','五','六'][new Date(d).getDay()];
-    return `<div class="day-col">
-      <div class="bar"><div class="seg" style="height:${h}px;background:${col}"></div></div>
-      <div class="${d===today?'metric':'muted'}">${wd}</div>
-    </div>`;
-  }).join('');
+  const COLORS = {
+    spirit:   { '好':'#6BCB77', '普通':'#FFD93D', '很累':'#FFB4B4' },
+    mood:     { '開心':'#6BCB77', '普通':'#FFD93D', '煩躁':'#FF9F45' },
+    activity: { '不足':'#FFB4B4', '剛好':'#6BCB77', '太多':'#FF9F45' },
+  };
+  const headRow = `<div class="wg-row"><span class="wg-lab"></span>${
+    dates.map(d => {
+      const wd = ['日','一','二','三','四','五','六'][new Date(d).getDay()];
+      return `<span class="wg-cell ${d===today?'today':''}">${wd}</span>`;
+    }).join('')}</div>`;
+  const fieldRow = (key, emoji) => `<div class="wg-row">
+    <span class="wg-lab">${emoji}</span>${
+      dates.map(d => {
+        const v = cd.status[d] && cd.status[d][key];
+        const col = v ? COLORS[key][v] : '#ececec';
+        return `<span class="wg-cell"><span class="wg-dot" title="${v||'—'}" style="background:${col}"></span></span>`;
+      }).join('')}</div>`;
+  const weekgrid = `<div class="weekgrid">
+    ${headRow}
+    ${fieldRow('spirit','⚡')}
+    ${fieldRow('mood','😊')}
+    ${fieldRow('activity','🏃')}
+  </div>`;
 
   const { adviceText } = buildSummary(cd);
 
@@ -803,9 +928,9 @@ function renderStatus() {
     </div>
 
     <div class="card">
-      <div class="row-between"><strong>最近 7 天活動量</strong><small class="hint">綠=剛好 紅=不足 橘=太多</small></div>
+      <div class="row-between"><strong>最近 7 天摘要</strong><small class="hint">🟢好 🟡普通 🟠多 🔴差/累</small></div>
       <div class="gap8"></div>
-      <div class="week-strip">${strip}</div>
+      ${weekgrid}
       <div class="advice">💡 ${adviceText}</div>
     </div>
   `;
@@ -836,6 +961,7 @@ function render() {
     flows: renderFlows,
     chores: renderChores,
     status: renderStatus,
+    rewards: renderRewards,
   }[r] || renderHome)();
 }
 

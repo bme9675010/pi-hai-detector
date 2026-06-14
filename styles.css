@@ -120,6 +120,7 @@ body{
 }
 .menu-card .ico{font-size:2.2rem;}
 .menu-card .lbl{font-weight:900;font-size:1.02rem;line-height:1.2;}
+.menu-card .st{font-size:.74rem;font-weight:700;opacity:.9;}
 .menu-card:active{transform:translateY(3px);box-shadow:0 2px 0 rgba(0,0,0,.12);}
 .menu-card.full{grid-column:1 / -1;min-height:80px;flex-direction:row;align-items:center;gap:14px;}
 .menu-card.full .ico{font-size:2rem;}
@@ -178,6 +179,13 @@ body{
 .status-row{margin-bottom:10px;}
 .status-row .lab{font-weight:900;margin-bottom:5px;}
 .week-strip{display:flex;gap:6px;justify-content:space-between;}
+/* 7 天點陣 */
+.weekgrid{display:flex;flex-direction:column;gap:8px;}
+.wg-row{display:flex;align-items:center;}
+.wg-lab{width:28px;flex:0 0 auto;font-size:1rem;text-align:center;}
+.wg-cell{flex:1;display:flex;justify-content:center;align-items:center;font-size:.74rem;color:var(--muted);}
+.wg-cell.today{color:var(--ink);font-weight:900;}
+.wg-dot{width:22px;height:22px;border-radius:50%;display:inline-block;}
 .day-col{flex:1;text-align:center;font-size:.72rem;}
 .day-col .bar{height:60px;display:flex;flex-direction:column-reverse;gap:2px;align-items:center;}
 .day-col .seg{width:14px;border-radius:4px;}
