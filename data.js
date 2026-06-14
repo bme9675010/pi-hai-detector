@@ -44,6 +44,12 @@ const DEFAULT_LEVELS = [
   { id: "lv6", name: "彩虹伸展", type: "flexibility", desc: "坐著慢慢往前彎",   goal: "坐姿前彎 20 秒", emoji: "🌈" },
   { id: "lv7", name: "閃電快腿", type: "jump",        desc: "原地高抬腿快快跑", goal: "高抬腿 40 秒", emoji: "⚡" },
   { id: "lv8", name: "金雞獨立", type: "balance",     desc: "閉眼單腳站挑戰",   goal: "閉眼單腳站 10 秒", emoji: "🐔" },
+  { id: "lv9", name: "袋鼠樂園", type: "jump",        desc: "雙腳併攏連續往前跳", goal: "立定跳 10 下", emoji: "🦘" },
+  { id: "lv10", name: "陀螺轉轉", type: "coordination", desc: "原地轉圈後走直線",  goal: "轉 5 圈再走直線", emoji: "🌀" },
+  { id: "lv11", name: "鱷魚爬行", type: "core",       desc: "趴低用手肘往前爬", goal: "低姿爬行 30 秒", emoji: "🐊" },
+  { id: "lv12", name: "瑜伽樹式", type: "balance",    desc: "單腳站手往上伸像樹", goal: "樹式 20 秒", emoji: "🌳" },
+  { id: "lv13", name: "毛毛蟲伸展", type: "flexibility", desc: "站著彎腰手走到前方", goal: "毛毛蟲走 5 次", emoji: "🐛" },
+  { id: "lv14", name: "火箭發射", type: "jump",       desc: "蹲低再用力往上跳高", goal: "蹲跳 12 下", emoji: "🚀" },
 ];
 
 const LEVEL_TYPE_LABEL = {
@@ -68,6 +74,12 @@ const DEFAULT_CHORES = [
   { name: "把故事書放回書架", desc: "看完的書放回書架原位",       age: "4-6",   stars: 1, emoji: "📚" },
   { name: "幫忙摺自己的衣服", desc: "把曬乾的衣服摺好",           age: "10-12", stars: 2, emoji: "👕" },
   { name: "倒垃圾",           desc: "幫忙把小垃圾袋拿去丟",       age: "10-12", stars: 2, emoji: "🗑️" },
+  { name: "幫忙擺碗筷",       desc: "吃飯前把碗筷擺好",           age: "4-6",   stars: 1, emoji: "🥢" },
+  { name: "澆花",             desc: "幫家裡的植物澆水",           age: "7-9",   stars: 1, emoji: "🪴" },
+  { name: "整理書桌",         desc: "把書桌上的東西收整齊",       age: "7-9",   stars: 2, emoji: "🖊️" },
+  { name: "餵寵物",           desc: "幫寵物加飼料或換水",         age: "7-9",   stars: 1, emoji: "🐶" },
+  { name: "把曬乾的襪子配對", desc: "把襪子兩兩配成一雙",         age: "4-6",   stars: 1, emoji: "🧦" },
+  { name: "擦自己的鞋子",     desc: "把鞋子擦乾淨",               age: "10-12", stars: 2, emoji: "👟" },
 ];
 
 /* ---------- 狀態紀錄選項 ---------- */

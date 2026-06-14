@@ -19,6 +19,19 @@
   font-size:16px;
 }
 
+body.dark{
+  --bg:#1E2030;
+  --card:#2A2D42;
+  --ink:#EDEEF5;
+  --muted:#9AA0B8;
+  --line:#3A3F58;
+  --shadow:0 6px 0 rgba(0,0,0,.25);
+}
+body.dark .hero{box-shadow:0 6px 0 rgba(0,0,0,.3);}
+body.dark .choice{background:var(--card);color:var(--ink);}
+body.dark textarea,body.dark input[type=text],body.dark input[type=number]{background:var(--card);color:var(--ink);}
+body.dark .topbar .back,body.dark .child-chip{background:var(--card);color:var(--ink);}
+
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
 html,body{margin:0;padding:0;}
 body{
@@ -225,6 +238,23 @@ textarea{min-height:70px;resize:vertical;}
 /* 浮動星星動畫 */
 .fly-star{position:fixed;font-size:1.6rem;pointer-events:none;z-index:200;animation:fly 1s ease forwards;}
 @keyframes fly{0%{transform:translateY(0) scale(1);opacity:1;}100%{transform:translateY(-120px) scale(1.6);opacity:0;}}
+
+/* 成就徽章 */
+.badge-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
+.badge-item{text-align:center;opacity:.45;filter:grayscale(1);}
+.badge-item.got{opacity:1;filter:none;}
+.badge-item .b-emoji{font-size:1.8rem;}
+.badge-item .b-name{font-size:.72rem;font-weight:900;margin-top:2px;}
+.badge-item .b-desc{font-size:.62rem;color:var(--muted);line-height:1.1;margin-top:1px;}
+
+/* 輕量提示 toast */
+.toast{
+  position:fixed;left:50%;bottom:90px;transform:translateX(-50%);
+  background:var(--ink);color:#fff;padding:11px 18px;border-radius:999px;
+  font-weight:800;font-size:.9rem;z-index:300;box-shadow:0 4px 16px rgba(0,0,0,.25);
+  animation:toastin .25s ease, fade .3s ease 1.9s reverse;max-width:90%;text-align:center;
+}
+@keyframes toastin{from{opacity:0;transform:translate(-50%,12px);}to{opacity:1;transform:translate(-50%,0);}}
 
 .row-between{display:flex;align-items:center;justify-content:space-between;gap:10px;}
 .gap8{height:8px;}

@@ -51,7 +51,7 @@ function getCoords(fresh) {
 async function reverseName(lat, lon) {
   // 主：Nominatim
   try {
-    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&accept-language=zh-TW`);
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&accept-language=zh-TW&email=you@example.com`);
     if (r.ok) {
       const a = (await r.json()).address || {};
       const city = a.city || a.county || a.state;          // 縣市
