@@ -247,6 +247,16 @@ textarea{min-height:70px;resize:vertical;}
 .badge-item .b-name{font-size:.72rem;font-weight:900;margin-top:2px;}
 .badge-item .b-desc{font-size:.62rem;color:var(--muted);line-height:1.1;margin-top:1px;}
 
+/* 歷史月曆 */
+.cal-head{display:grid;grid-template-columns:repeat(7,1fr);text-align:center;font-size:.72rem;color:var(--muted);font-weight:800;margin-bottom:4px;}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}
+.cal-cell{aspect-ratio:1;border-radius:10px;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;font-size:.78rem;}
+.cal-cell.empty{background:transparent;}
+.cal-cell.today{outline:2px solid var(--primary);}
+.cal-day{font-weight:800;}
+.cal-dot{width:10px;height:10px;border-radius:50%;margin-top:2px;}
+.cal-flame{position:absolute;top:1px;right:3px;font-size:.6rem;}
+
 /* 輕量提示 toast */
 .toast{
   position:fixed;left:50%;bottom:90px;transform:translateX(-50%);

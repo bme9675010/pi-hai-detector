@@ -51,7 +51,8 @@ function blankChildData() {
     chores: { date:'', drawn:[], doneIds:[] },
     status: {},               // status[date] = {spirit, mood, ...}
     redeemLog: [],            // 兌換紀錄 [{name, cost, date}]
-    awarded: { date:'', keys:[] }  // 今日已領星星的任務，防止重複領
+    awarded: { date:'', keys:[] }, // 今日已領星星的任務，防止重複領
+    activeDays: []            // 有完成任務的日期（算連續天數 streak）
   };
 }
 /* 確保獎勵清單存在（相容舊版資料） */
@@ -61,6 +62,45 @@ function ensureRewards() {
     save();
   }
   return state.rewards;
+}
+
+/* ---------------- 自訂內容（家長可新增） ---------------- */
+const AGE_RANK = { '4-6':1, '7-9':2, '10-12':3 };
+// 家事：預設給穩定 id（d0,d1…），加上家長自訂的
+function allChores() {
+  const defs = D.DEFAULT_CHORES.map((c, i) => ({ id: 'd' + i, ...c }));
+  const custom = Array.isArray(state.customChores) ? state.customChores : [];
+  return [...defs, ...custom];
+}
+function choreById(id) { return allChores().find(c => c.id === id); }
+// 依目前小孩年齡篩選適合的家事（年齡層相等或更小的）
+function choresForChild() {
+  const rank = AGE_RANK[child().age] || 3;
+  const pool = allChores().filter(c => (AGE_RANK[c.age] || 1) <= rank);
+  return pool.length ? pool : allChores();
+}
+// 放電動作：預設 + 自訂（自訂動作預設適用所有年齡/場地/時段）
+function allActions() {
+  const custom = Array.isArray(state.customActions) ? state.customActions : [];
+  return [...D.ACTION_POOL, ...custom];
+}
+
+/* ---------------- 連續天數 streak ---------------- */
+function markActiveToday() {
+  const cd = cdata();
+  if (!Array.isArray(cd.activeDays)) cd.activeDays = [];
+  const t = todayStr();
+  if (!cd.activeDays.includes(t)) { cd.activeDays.push(t); }
+}
+function computeStreak(cd) {
+  const days = new Set(cd.activeDays || []);
+  if (!days.size) return 0;
+  // 從今天（或昨天）往回數連續天數
+  let streak = 0;
+  const d = new Date();
+  if (!days.has(dateStr(d))) d.setDate(d.getDate() - 1);  // 今天還沒做也算還在線（從昨天起算）
+  while (days.has(dateStr(d))) { streak++; d.setDate(d.getDate() - 1); }
+  return streak;
 }
 function save() { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
 
@@ -87,6 +127,7 @@ function cdata() {
   if (state.stars[id] == null) state.stars[id] = 0;
   if (!Array.isArray(state.data[id].redeemLog)) state.data[id].redeemLog = [];  // 相容舊資料
   if (!state.data[id].awarded) state.data[id].awarded = { date:'', keys:[] };
+  if (!Array.isArray(state.data[id].activeDays)) state.data[id].activeDays = [];
   return state.data[id];
 }
 function addStars(n, ev) {
@@ -109,6 +150,7 @@ function awardOnce(key, n, ev, msg) {
   if (cd.awarded.date !== t) cd.awarded = { date: t, keys: [] };  // 跨日重置
   if (cd.awarded.keys.includes(key)) return false;               // 今天已領過
   cd.awarded.keys.push(key);
+  markActiveToday();
   addStars(n, ev);
   if (msg) rewardModal(n, msg);
   save();
@@ -234,6 +276,7 @@ function renderHome() {
           <strong>${esc(c.name)} 的今日狀態</strong>
           <span class="star-badge">⭐ ${stars}</span>
         </div>
+        ${computeStreak(cd) >= 2 ? `<div style="font-weight:800;color:var(--orange);font-size:.9rem;margin-top:4px">🔥 連續 ${computeStreak(cd)} 天有完成任務！</div>` : ''}
         <div class="muted" style="font-size:.9rem;margin-top:4px">${summaryText.text}</div>
         <div class="advice" id="home-advice">💡 ${homeAdvice()}</div>
       </div>
@@ -567,8 +610,49 @@ function renderEnergy() {
       <small class="hint" style="display:block;margin-top:8px">${timeHint}</small>
     </div>
     ${taskHtml}
+
+    <div class="section-title">家長設定：自訂動作</div>
+    ${(state.customActions||[]).map(a => `
+      <div class="card task-item">
+        <span class="n" style="background:var(--bg)">💪</span>
+        <div class="body"><div class="t">${esc(a.name)}</div><div class="d">${esc(a.desc)} · ${esc(a.metric)}</div></div>
+        <button class="btn ghost sm" onclick="delCustomAction('${a.id}')">🗑️</button>
+      </div>`).join('')}
+    <div class="card">
+      <input type="text" id="ca-name" placeholder="動作名稱，例如：跳繩" maxlength="12" />
+      <div class="gap8"></div>
+      <input type="text" id="ca-desc" placeholder="說明（選填）" maxlength="24" />
+      <div class="gap8"></div>
+      <div class="row-between">
+        <input type="text" id="ca-metric" placeholder="時間/次數，例如：30 下" maxlength="10" style="flex:1" />
+        <select id="ca-diff" class="choice" style="width:90px">
+          <option value="easy">簡單</option><option value="normal" selected>普通</option><option value="hard">挑戰</option>
+        </select>
+        <button class="btn accent" onclick="addCustomAction()">＋</button>
+      </div>
+      <small class="hint" style="display:block;margin-top:6px">自訂動作會適用所有年齡、場地、時段</small>
+    </div>
   `;
   loadWeather();   // 非同步抓天氣，回來後只更新天氣那塊
+}
+function addCustomAction() {
+  const name = (document.getElementById('ca-name').value || '').trim();
+  const desc = (document.getElementById('ca-desc').value || '').trim() || '加油動一動';
+  const metric = (document.getElementById('ca-metric').value || '').trim() || '30 秒';
+  const difficulty = document.getElementById('ca-diff').value;
+  if (!name) { alert('請輸入動作名稱'); return; }
+  if (!Array.isArray(state.customActions)) state.customActions = [];
+  state.customActions.push({
+    id: uid(), name, desc, metric, difficulty,
+    ages: ['4-6','7-9','10-12'], places: ['indoor','outdoor','small'],
+    times: ['morning','afternoon','evening'], seconds: 30
+  });
+  save(); renderEnergy();
+}
+function delCustomAction(id) {
+  if (!confirm('刪除這個自訂動作？')) return;
+  state.customActions = (state.customActions || []).filter(a => a.id !== id);
+  save(); renderEnergy();
 }
 
 /* ---- 天氣 banner ---- */
@@ -628,15 +712,16 @@ function relocateWeather() {
 }
 function generateActions() {
   const c = child();
+  const ALL = allActions();
   const budget = energyFilter.minutes * 60;
   const inAge = a => a.ages.includes(c.age);
   const inPlace = a => a.places.includes(energyFilter.place);
   const inTime = a => a.times.includes(energyFilter.time);
   // 逐步放寬條件，確保至少有 3 個動作可選
-  let pool = D.ACTION_POOL.filter(a => inAge(a) && inPlace(a) && inTime(a));
-  if (pool.length < 3) pool = D.ACTION_POOL.filter(a => inPlace(a) && inTime(a));
-  if (pool.length < 3) pool = D.ACTION_POOL.filter(a => inAge(a) && inPlace(a));
-  if (pool.length < 3) pool = D.ACTION_POOL.filter(a => inPlace(a));
+  let pool = ALL.filter(a => inAge(a) && inPlace(a) && inTime(a));
+  if (pool.length < 3) pool = ALL.filter(a => inPlace(a) && inTime(a));
+  if (pool.length < 3) pool = ALL.filter(a => inAge(a) && inPlace(a));
+  if (pool.length < 3) pool = ALL.filter(a => inPlace(a));
   pool = sample(pool, pool.length); // 打散
   const chosen = [];
   let total = 0;
@@ -696,8 +781,12 @@ function renderLevels() {
         : unlocked
           ? `<button class="btn green sm" onclick="completeLevel('${l.id}',event)">完成</button>`
           : `<span class="muted" style="font-size:.8rem">未解鎖</span>`}
+      <button class="btn ghost sm" onclick="delLevel('${l.id}')">🗑️</button>
     </div>`;
   }).join('');
+
+  const typeOpts = Object.entries(D.LEVEL_TYPE_LABEL)
+    .map(([v,l]) => `<option value="${v}">${l}</option>`).join('');
 
   $app.innerHTML = `
     ${topbar('體能闖關')}
@@ -710,7 +799,35 @@ function renderLevels() {
     </div>
     ${items}
     ${done>0?`<button class="btn block ghost" onclick="resetLevels()">重新開始所有關卡</button>`:''}
+
+    <div class="section-title">家長設定：新增關卡</div>
+    <div class="card">
+      <input type="text" id="lv-name" placeholder="關卡名稱，例如：超人飛行" maxlength="10" />
+      <div class="gap8"></div>
+      <input type="text" id="lv-goal" placeholder="完成條件，例如：平板撐 20 秒" maxlength="16" />
+      <div class="gap8"></div>
+      <div class="row-between">
+        <select id="lv-type" class="choice" style="flex:1">${typeOpts}</select>
+        <input type="text" id="lv-emoji" placeholder="圖示" value="⭐" maxlength="2" style="width:70px;text-align:center" />
+        <button class="btn accent" onclick="addLevel()">＋</button>
+      </div>
+    </div>
   `;
+}
+function addLevel() {
+  const name = (document.getElementById('lv-name').value || '').trim();
+  const goal = (document.getElementById('lv-goal').value || '').trim() || '完成挑戰';
+  const type = document.getElementById('lv-type').value;
+  const emoji = (document.getElementById('lv-emoji').value || '⭐').trim() || '⭐';
+  if (!name) { alert('請輸入關卡名稱'); return; }
+  cdata().levels.push({ id: uid(), name, type, desc: goal, goal, emoji, done: false });
+  save(); renderLevels();
+}
+function delLevel(id) {
+  if (!confirm('刪除這個關卡？')) return;
+  const cd = cdata();
+  cd.levels = cd.levels.filter(l => l.id !== id);
+  save(); renderLevels();
 }
 function completeLevel(id, ev) {
   const cd = cdata();
@@ -835,22 +952,32 @@ function renderChores() {
   if (spinning) {
     stage = `<div class="wheel-stage"><div style="font-size:4rem" class="spin">🎡</div></div>`;
   } else if (has) {
-    stage = cd.chores.drawn.map(idx => {
-      const ch = D.DEFAULT_CHORES[idx];
-      const done = cd.chores.doneIds.includes(idx);
+    stage = cd.chores.drawn.map(id => {
+      const ch = choreById(id);
+      if (!ch) return '';
+      const done = cd.chores.doneIds.includes(id);
       return `<div class="card task-item">
-        <span class="n" style="background:var(--bg)">${ch.emoji}</span>
+        <span class="n" style="background:var(--bg)">${ch.emoji || '🧹'}</span>
         <div class="body">
           <div class="t">${esc(ch.name)}</div>
           <div class="d">${esc(ch.desc)} · 適合 ${ch.age} 歲</div>
           <div class="task-meta"><span class="metric">⭐ ${ch.stars} 顆</span></div>
         </div>
-        <button class="check ${done?'done':''}" onclick="toggleChore(${idx},event)">${done?'✓':''}</button>
+        <button class="check ${done?'done':''}" onclick="toggleChore('${id}',event)">${done?'✓':''}</button>
       </div>`;
     }).join('');
   } else {
     stage = `<div class="empty"><div class="e">🎡</div>按下面的按鈕<br>抽出今天的小任務！</div>`;
   }
+
+  // 家長自訂家事清單
+  const custom = (state.customChores || []).map(c =>
+    `<div class="card task-item">
+      <span class="n" style="background:var(--bg)">${c.emoji || '🧹'}</span>
+      <div class="body"><div class="t">${esc(c.name)}</div>
+        <div class="d">${esc(c.desc)} · 適合 ${c.age} 歲 · ⭐${c.stars}</div></div>
+      <button class="btn ghost sm" onclick="delCustomChore('${c.id}')">🗑️</button>
+    </div>`).join('');
 
   $app.innerHTML = `
     ${topbar('家事任務輪盤')}
@@ -859,27 +986,60 @@ function renderChores() {
       ${has?'🔄 重新抽今日小任務':'🎲 抽今日小任務'}
     </button>
     <div class="gap8"></div>
-    <small class="hint center" style="display:block">每天隨機抽 1～3 個任務，完成打勾領星星</small>
+    <small class="hint center" style="display:block">依 ${esc(child().name)}（${child().age} 歲）抽 1～3 個適齡任務</small>
+
+    <div class="section-title">家長設定：自訂家事</div>
+    ${custom}
+    <div class="card">
+      <input type="text" id="cc-name" placeholder="家事名稱，例如：幫忙摺被子" maxlength="14" />
+      <div class="gap8"></div>
+      <input type="text" id="cc-desc" placeholder="說明（選填）" maxlength="24" />
+      <div class="gap8"></div>
+      <div class="row-between">
+        <select id="cc-age" class="choice" style="flex:1">
+          <option value="4-6">4-6 歲</option><option value="7-9" selected>7-9 歲</option><option value="10-12">10-12 歲</option>
+        </select>
+        <input type="number" id="cc-stars" placeholder="星星" min="1" value="1" style="width:80px" />
+        <button class="btn accent" onclick="addCustomChore()">＋</button>
+      </div>
+    </div>
   `;
 }
 function drawChores() {
   spinning = true; renderChores();
   setTimeout(() => {
-    const n = 1 + Math.floor(Math.random()*3); // 1~3
-    const idxs = sample(D.DEFAULT_CHORES.map((_,i)=>i), n);
-    cdata().chores = { date: todayStr(), drawn: idxs, doneIds: [] };
+    const pool = choresForChild();
+    const n = Math.min(pool.length, 1 + Math.floor(Math.random()*3)); // 1~3
+    const ids = sample(pool.map(c => c.id), n);
+    cdata().chores = { date: todayStr(), drawn: ids, doneIds: [] };
     spinning = false; save(); renderChores();
   }, 700);
 }
-function toggleChore(idx, ev) {
+function toggleChore(id, ev) {
   const cd = cdata();
-  if (cd.chores.doneIds.includes(idx)) {
-    cd.chores.doneIds = cd.chores.doneIds.filter(i=>i!==idx);   // 取消打勾不退星
+  const ch = choreById(id);
+  if (cd.chores.doneIds.includes(id)) {
+    cd.chores.doneIds = cd.chores.doneIds.filter(i => i !== id);   // 取消打勾不退星
   } else {
-    cd.chores.doneIds.push(idx);
-    const got = awardOnce('chore:'+idx, D.DEFAULT_CHORES[idx].stars, ev, `完成「${D.DEFAULT_CHORES[idx].name}」！`);
+    cd.chores.doneIds.push(id);
+    const got = awardOnce('chore:'+id, (ch && ch.stars) || 1, ev, `完成「${ch ? ch.name : '家事'}」！`);
     if (!got) toast('這個家事今天已經領過星星囉 ⭐');
   }
+  save(); renderChores();
+}
+function addCustomChore() {
+  const name = (document.getElementById('cc-name').value || '').trim();
+  const desc = (document.getElementById('cc-desc').value || '').trim() || '幫忙做家事';
+  const age = document.getElementById('cc-age').value;
+  const stars = parseInt(document.getElementById('cc-stars').value, 10) || 1;
+  if (!name) { alert('請輸入家事名稱'); return; }
+  if (!Array.isArray(state.customChores)) state.customChores = [];
+  state.customChores.push({ id: uid(), name, desc, age, stars, emoji: '🧹' });
+  save(); renderChores();
+}
+function delCustomChore(id) {
+  if (!confirm('刪除這個自訂家事？')) return;
+  state.customChores = (state.customChores || []).filter(c => c.id !== id);
   save(); renderChores();
 }
 
@@ -892,6 +1052,7 @@ function getAchievements() {
   const levelsDone = cd.levels.filter(l => l.done).length;
   const statusDays = Object.keys(cd.status).length;
   const redeems = cd.redeemLog.length;
+  const streak = computeStreak(cd);
   return [
     { emoji:'⭐', name:'初次放電', desc:'賺到第一顆星',     done: earned >= 1 },
     { emoji:'🌟', name:'星星新手', desc:'累積賺 20 顆星',   done: earned >= 20 },
@@ -899,6 +1060,8 @@ function getAchievements() {
     { emoji:'✨', name:'星星大師', desc:'累積賺 100 顆星',  done: earned >= 100 },
     { emoji:'🏆', name:'闖關高手', desc:'完成 5 個關卡',     done: levelsDone >= 5 },
     { emoji:'👑', name:'全破關王', desc:'完成所有關卡',       done: cd.levels.length > 0 && levelsDone >= cd.levels.length },
+    { emoji:'🔥', name:'三天有恆', desc:'連續 3 天完成任務', done: streak >= 3 },
+    { emoji:'💪', name:'七天達人', desc:'連續 7 天完成任務', done: streak >= 7 },
     { emoji:'📅', name:'觀察日記', desc:'記錄 7 天狀態',     done: statusDays >= 7 },
     { emoji:'🎁', name:'兌換高手', desc:'兌換 3 次獎勵',     done: redeems >= 3 },
   ];
@@ -1088,8 +1251,58 @@ function renderStatus() {
       ${weekgrid}
       <div class="advice">💡 ${adviceText}</div>
     </div>
+    <button class="btn block ghost" onclick="go('history')">📅 看歷史月曆</button>
   `;
 }
+
+/* 歷史月曆 */
+let histDate = new Date(); histDate.setDate(1);
+function renderHistory() {
+  const cd = cdata();
+  const y = histDate.getFullYear(), m = histDate.getMonth();
+  const moodColor = { '開心':'#6BCB77', '普通':'#FFD93D', '煩躁':'#FF9F45' };
+  const actColor = { '不足':'#FFB4B4', '剛好':'#6BCB77', '太多':'#FF9F45' };
+  const first = new Date(y, m, 1).getDay();          // 當月 1 號是星期幾
+  const daysIn = new Date(y, m + 1, 0).getDate();
+  const todayS = todayStr();
+
+  let cells = '';
+  for (let i = 0; i < first; i++) cells += `<div class="cal-cell empty"></div>`;
+  for (let d = 1; d <= daysIn; d++) {
+    const ds = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const s = cd.status[ds];
+    const active = (cd.activeDays || []).includes(ds);
+    const col = s ? (moodColor[s.mood] || actColor[s.activity] || '#cfd2e0') : 'transparent';
+    cells += `<div class="cal-cell ${ds===todayS?'today':''}">
+      <span class="cal-day">${d}</span>
+      <span class="cal-dot" style="background:${col}"></span>
+      ${active ? '<span class="cal-flame">🔥</span>' : ''}
+    </div>`;
+  }
+
+  const recordedDays = Object.keys(cd.status).filter(k => k.startsWith(`${y}-${String(m+1).padStart(2,'0')}`)).length;
+
+  $app.innerHTML = `
+    ${topbar('歷史月曆')}
+    <div class="card">
+      <div class="row-between">
+        <button class="btn ghost sm" onclick="histShift(-1)">‹ 上個月</button>
+        <strong>${y} 年 ${m+1} 月</strong>
+        <button class="btn ghost sm" onclick="histShift(1)">下個月 ›</button>
+      </div>
+      <div class="gap8"></div>
+      <div class="cal-head">${['日','一','二','三','四','五','六'].map(w=>`<span>${w}</span>`).join('')}</div>
+      <div class="cal-grid">${cells}</div>
+      <small class="hint" style="display:block;margin-top:10px">圓點＝當天心情/活動量　🔥＝有完成任務　本月已記錄 ${recordedDays} 天</small>
+    </div>
+    <button class="btn block ghost" onclick="go('status')">‹ 回狀態紀錄</button>
+  `;
+}
+function histShift(n) {
+  histDate.setMonth(histDate.getMonth() + n);
+  renderHistory();
+}
+
 function ensureToday() {
   const cd = cdata(); const t = todayStr();
   if (!cd.status[t]) cd.status[t] = {};
@@ -1117,6 +1330,7 @@ function render() {
     chores: renderChores,
     status: renderStatus,
     rewards: renderRewards,
+    history: renderHistory,
   }[r] || renderHome)();
 }
 
