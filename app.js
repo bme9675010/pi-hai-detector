@@ -253,7 +253,64 @@ function renderChildren() {
     ${topbar('管理小孩', false)}
     ${list}
     <button class="btn block accent" onclick="editChild(null)">＋ 新增小孩</button>
+
+    <div class="section-title">資料備份</div>
+    <div class="card">
+      <small class="hint" style="display:block;margin-bottom:10px">
+        所有資料只存在這支手機。換手機或清快取前，記得先匯出備份。
+      </small>
+      <button class="btn block green" onclick="exportData()">⬇️ 匯出備份檔</button>
+      <div class="gap8"></div>
+      <button class="btn block ghost" onclick="document.getElementById('importfile').click()">⬆️ 匯入還原</button>
+      <input type="file" id="importfile" accept="application/json,.json" style="display:none" onchange="importData(event)" />
+    </div>
   `;
+}
+
+/* 匯出整包資料成 JSON 檔 */
+function exportData() {
+  const payload = { app: '屁孩特攻隊', version: 1, exportedAt: new Date().toISOString(), state };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `屁孩特攻隊備份_${todayStr()}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/* 匯入備份檔還原 */
+function importData(ev) {
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(reader.result);
+      const s = parsed.state || parsed;   // 容許直接是 state 或包了一層
+      if (!s || !Array.isArray(s.children) || s.children.length === 0) {
+        throw new Error('格式不符');
+      }
+      const names = s.children.map(c => c.name).join('、');
+      if (!confirm(`確定要還原嗎？\n這會「覆蓋」目前手機上的所有資料。\n\n備份內含小孩：${names}`)) {
+        ev.target.value = ''; return;
+      }
+      state = s;
+      if (!state.activeChild || !state.children.find(c => c.id === state.activeChild)) {
+        state.activeChild = state.children[0].id;
+      }
+      save();
+      ev.target.value = '';
+      go('home'); render();
+      modal(`<div class="big">🎉</div><h2>還原成功！</h2>
+        <p class="muted">已載入 ${state.children.length} 位小孩的資料</p>
+        <button class="btn block green" onclick="this.closest('.modal-mask').remove()">好</button>`);
+    } catch (e) {
+      alert('匯入失敗：這不是有效的備份檔。\n（' + e.message + '）');
+      ev.target.value = '';
+    }
+  };
+  reader.readAsText(file);
 }
 let childModalEl = null;
 function editChild(id) {
