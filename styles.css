@@ -208,6 +208,11 @@ textarea{min-height:70px;resize:vertical;}
 .flow-step{display:flex;align-items:center;gap:10px;}
 .flow-step .grip{cursor:grab;font-size:1.2rem;color:var(--muted);user-select:none;}
 .flow-step.dragging{opacity:.4;}
+.reorder{display:flex;flex-direction:column;gap:3px;flex:0 0 auto;}
+.rbtn{width:30px;height:24px;border:none;border-radius:8px;background:var(--bg);color:var(--ink);
+  font-size:.7rem;cursor:pointer;line-height:1;}
+.rbtn:disabled{opacity:.3;cursor:default;}
+.rbtn:active:not(:disabled){background:var(--line);}
 
 /* 浮動星星動畫 */
 .fly-star{position:fixed;font-size:1.6rem;pointer-events:none;z-index:200;animation:fly 1s ease forwards;}

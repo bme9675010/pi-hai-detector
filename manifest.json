@@ -1,6 +1,6 @@
 {
-  "name": "屁孩偵測器 — 小孩任務中心",
-  "short_name": "屁孩偵測器",
+  "name": "屁孩特攻隊 — 小孩任務中心",
+  "short_name": "屁孩特攻隊",
   "description": "幫小孩放電、闖關、養成好習慣的家庭任務 App",
   "start_url": "./index.html",
   "scope": "./",

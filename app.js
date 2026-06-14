@@ -565,7 +565,10 @@ function renderFlows() {
   const steps = f.steps.map((s,i) => `
     <div class="card flow-step" draggable="true"
       ondragstart="flowDragStart(event,${i})" ondragover="event.preventDefault()" ondrop="flowDrop(event,${i})">
-      <span class="grip">≡</span>
+      <div class="reorder">
+        <button class="rbtn" ${i===0?'disabled':''} onclick="moveFlowStep(${i},-1)">▲</button>
+        <button class="rbtn" ${i===f.steps.length-1?'disabled':''} onclick="moveFlowStep(${i},1)">▼</button>
+      </div>
       <button class="check ${f.checked[s.id]?'done':''}" onclick="toggleFlow('${s.id}')">${f.checked[s.id]?'✓':''}</button>
       <div class="body" style="flex:1"><div class="t" style="${f.checked[s.id]?'text-decoration:line-through;color:#aaa':''}">${esc(s.text)}</div></div>
       <button class="btn ghost sm" onclick="delFlowStep('${s.id}')">🗑️</button>
@@ -591,8 +594,16 @@ function renderFlows() {
       ${allDone?'完成整個流程！⭐':'全部打勾後可領星星'}
     </button>
     <div class="gap8"></div>
-    <small class="hint">提示：按住 ≡ 可拖曳調整順序</small>
+    <small class="hint">提示：用 ▲▼ 調整步驟順序（電腦也可拖曳）</small>
   `;
+}
+// 上移/下移流程步驟（手機觸控可用）
+function moveFlowStep(i, dir) {
+  const f = cdata().flows[activeFlow];
+  const j = i + dir;
+  if (j < 0 || j >= f.steps.length) return;
+  [f.steps[i], f.steps[j]] = [f.steps[j], f.steps[i]];
+  save(); renderFlows();
 }
 function toggleFlow(sid) {
   const f = cdata().flows[activeFlow];
