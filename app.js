@@ -164,6 +164,32 @@ function toast(text) {
   setTimeout(() => t.remove(), 2200);
 }
 
+/* ---------------- 語音輸入 ---------------- */
+// 一個會說話的麥克風按鈕：把辨識結果填進指定 input
+function micBtn(inputId) {
+  return `<button type="button" class="mic" title="語音輸入" onclick="voiceInput('${inputId}')">🎤</button>`;
+}
+let voiceActive = false;
+function voiceInput(id) {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { toast('這個瀏覽器不支援語音輸入'); return; }
+  if (voiceActive) return;
+  const inp = document.getElementById(id);
+  if (!inp) return;
+  const rec = new SR();
+  rec.lang = 'zh-TW'; rec.interimResults = false; rec.maxAlternatives = 1;
+  rec.onstart = () => { voiceActive = true; toast('🎤 請說話…'); inp.classList.add('listening'); };
+  rec.onresult = (e) => {
+    const text = e.results[0][0].transcript.replace(/[。，、．,.\s]+$/,''); // 去尾標點
+    inp.value = inp.value ? (inp.value + ' ' + text) : text;
+    inp.dispatchEvent(new Event('input'));
+    inp.dispatchEvent(new Event('change'));
+  };
+  rec.onerror = (e) => { toast('語音輸入失敗：' + (e.error === 'not-allowed' ? '請允許麥克風' : e.error)); };
+  rec.onend = () => { voiceActive = false; inp.classList.remove('listening'); };
+  try { rec.start(); } catch (e) { voiceActive = false; }
+}
+
 /* ---------------- 路由 ---------------- */
 function go(route) { location.hash = route; }
 function currentRoute() { return location.hash.replace('#','') || 'home'; }
@@ -499,7 +525,7 @@ function childModalInner() {
     <h2>${childForm.id?'編輯小孩':'新增小孩'}</h2>
     <div style="text-align:left">
       <div class="field-label">名字</div>
-      <input type="text" id="cf-name" value="${esc(childForm.name)}" placeholder="例如：小明" maxlength="6" oninput="childForm.name=this.value" />
+      <div class="voice-field"><input type="text" id="cf-name" value="${esc(childForm.name)}" placeholder="例如：小明" maxlength="6" oninput="childForm.name=this.value" />${micBtn('cf-name')}</div>
       <div class="field-label">年齡層</div>
       <div class="chip-group" id="cf-ages">${ages}</div>
       <div class="field-label">代表顏色</div>
@@ -611,7 +637,7 @@ function renderEnergy() {
     </div>
     ${taskHtml}
 
-    <div class="section-title">家長設定：自訂動作</div>
+    <div class="section-title">自己加放電動作</div>
     ${(state.customActions||[]).map(a => `
       <div class="card task-item">
         <span class="n" style="background:var(--bg)">💪</span>
@@ -619,7 +645,7 @@ function renderEnergy() {
         <button class="btn ghost sm" onclick="delCustomAction('${a.id}')">🗑️</button>
       </div>`).join('')}
     <div class="card">
-      <input type="text" id="ca-name" placeholder="動作名稱，例如：跳繩" maxlength="12" />
+      <div class="voice-field"><input type="text" id="ca-name" placeholder="動作名稱，例如：跳繩" maxlength="12" />${micBtn('ca-name')}</div>
       <div class="gap8"></div>
       <input type="text" id="ca-desc" placeholder="說明（選填）" maxlength="24" />
       <div class="gap8"></div>
@@ -800,9 +826,9 @@ function renderLevels() {
     ${items}
     ${done>0?`<button class="btn block ghost" onclick="resetLevels()">重新開始所有關卡</button>`:''}
 
-    <div class="section-title">家長設定：新增關卡</div>
+    <div class="section-title">自己加關卡</div>
     <div class="card">
-      <input type="text" id="lv-name" placeholder="關卡名稱，例如：超人飛行" maxlength="10" />
+      <div class="voice-field"><input type="text" id="lv-name" placeholder="關卡名稱，例如：超人飛行" maxlength="10" />${micBtn('lv-name')}</div>
       <div class="gap8"></div>
       <input type="text" id="lv-goal" placeholder="完成條件，例如：平板撐 20 秒" maxlength="16" />
       <div class="gap8"></div>
@@ -892,6 +918,7 @@ function renderFlows() {
     ${steps || '<div class="empty"><div class="e">📋</div>還沒有步驟，新增一個吧</div>'}
     <div class="row-between">
       <input type="text" id="newstep" placeholder="新增步驟…" style="flex:1" />
+      ${micBtn('newstep')}
       <button class="btn accent" onclick="addFlowStep()">＋</button>
     </div>
     <div class="gap8"></div>
@@ -988,10 +1015,10 @@ function renderChores() {
     <div class="gap8"></div>
     <small class="hint center" style="display:block">依 ${esc(child().name)}（${child().age} 歲）抽 1～3 個適齡任務</small>
 
-    <div class="section-title">家長設定：自訂家事</div>
+    <div class="section-title">自己加家事</div>
     ${custom}
     <div class="card">
-      <input type="text" id="cc-name" placeholder="家事名稱，例如：幫忙摺被子" maxlength="14" />
+      <div class="voice-field"><input type="text" id="cc-name" placeholder="家事名稱，例如：幫忙摺被子" maxlength="14" />${micBtn('cc-name')}</div>
       <div class="gap8"></div>
       <input type="text" id="cc-desc" placeholder="說明（選填）" maxlength="24" />
       <div class="gap8"></div>
@@ -1117,9 +1144,9 @@ function renderRewards() {
     <div class="card">${achievementsHTML()}</div>
     <div class="section-title">可兌換的獎勵</div>
     ${list}
-    <div class="section-title">家長設定：新增獎勵</div>
+    <div class="section-title">自己加獎勵</div>
     <div class="card">
-      <input type="text" id="rw-name" placeholder="獎勵名稱，例如：看卡通 30 分鐘" maxlength="20" />
+      <div class="voice-field"><input type="text" id="rw-name" placeholder="獎勵名稱，例如：看卡通 30 分鐘" maxlength="20" />${micBtn('rw-name')}</div>
       <div class="gap8"></div>
       <div class="row-between">
         <input type="number" id="rw-cost" placeholder="需要幾顆星" min="1" style="flex:1" />
@@ -1159,7 +1186,7 @@ function editReward(id) {
     <h2>編輯獎勵</h2>
     <div style="text-align:left">
       <div class="field-label">名稱</div>
-      <input type="text" id="er-name" value="${esc(r.name)}" maxlength="20" />
+      <div class="voice-field"><input type="text" id="er-name" value="${esc(r.name)}" maxlength="20" />${micBtn('er-name')}</div>
       <div class="field-label">需要幾顆星</div>
       <input type="number" id="er-cost" value="${r.cost}" min="1" />
     </div>
@@ -1240,7 +1267,7 @@ function renderStatus() {
       <small class="hint" style="display:block;margin:2px 0 6px">花 10 秒，只做生活觀察，不是醫療診斷</small>
       ${fields}
       <div class="status-row">
-        <div class="lab">📝 備註</div>
+        <div class="lab row-between">📝 備註 ${micBtn('status-note')}</div>
         <textarea id="status-note" placeholder="今天有什麼想記下來的？" onchange="setStatusNote(this.value)">${esc(cur.note||'')}</textarea>
       </div>
     </div>

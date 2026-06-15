@@ -247,6 +247,15 @@ textarea{min-height:70px;resize:vertical;}
 .badge-item .b-name{font-size:.72rem;font-weight:900;margin-top:2px;}
 .badge-item .b-desc{font-size:.62rem;color:var(--muted);line-height:1.1;margin-top:1px;}
 
+/* 語音輸入 */
+.voice-field{display:flex;gap:8px;align-items:center;}
+.voice-field input{flex:1;}
+.mic{flex:0 0 auto;border:2px solid var(--line);background:#fff;border-radius:14px;
+  width:46px;height:46px;font-size:1.2rem;cursor:pointer;line-height:1;}
+.mic:active{background:var(--line);}
+body.dark .mic{background:var(--card);}
+input.listening,textarea.listening{outline:2px solid var(--primary);}
+
 /* 歷史月曆 */
 .cal-head{display:grid;grid-template-columns:repeat(7,1fr);text-align:center;font-size:.72rem;color:var(--muted);font-weight:800;margin-bottom:4px;}
 .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}
