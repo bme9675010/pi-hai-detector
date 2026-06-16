@@ -21,6 +21,22 @@ export default {
     let body;
     try { body = await request.json(); } catch { return json({ error: 'bad json' }, 400, cors); }
 
+    // ---- 雲端同步（用同步碼存取 KV）----
+    const path = new URL(request.url).pathname;
+    if (path === '/sync/save' || path === '/sync/load') {
+      if (!env.SYNC) return json({ error: 'KV 尚未綁定（請建立 SYNC namespace 並 deploy）' }, 500, cors);
+      const code = String(body.code || '').trim();
+      if (code.length < 6) return json({ error: '同步碼至少 6 個字' }, 400, cors);
+      const key = 'sync:' + code;
+      if (path === '/sync/save') {
+        await env.SYNC.put(key, JSON.stringify(body.data || {}));
+        return json({ ok: true }, 200, cors);
+      } else {
+        const v = await env.SYNC.get(key);
+        return json({ data: v ? JSON.parse(v) : null }, 200, cors);
+      }
+    }
+
     const userPrompt = buildPrompt(body);
     if (!userPrompt) return json({ error: 'unknown type' }, 400, cors);
 

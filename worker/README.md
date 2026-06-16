@@ -44,6 +44,25 @@
 
 就算 MiniMax 設定錯，DeepSeek 仍會自動接手，所以一定能動。
 
+## 啟用雲端同步（多裝置）
+
+1. 建立 KV namespace：
+   ```
+   wrangler kv namespace create SYNC
+   ```
+   它會印出一段像 `id = "abcd1234..."` 的內容。
+
+2. 把那個 `id` 貼到 `wrangler.toml` 裡 `[[kv_namespaces]]` 的 `id = "PASTE_KV_ID_HERE"`。
+
+3. 重新部署：
+   ```
+   wrangler deploy
+   ```
+
+4. 在 App →「管理」→「雲端同步」設一組同步碼（≥6 字），按「上傳到雲端」；
+   另一台裝置輸入同一組同步碼按「從雲端下載」即可。
+   ⚠️ 同步碼等於密碼，設長一點、不要外流。
+
 ## 本機測試（選用）
 ```
 wrangler dev

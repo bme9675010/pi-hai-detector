@@ -545,6 +545,19 @@ function renderChildren() {
       <button class="btn block green" onclick="saveAiUrl()">儲存網址</button>
     </div>
 
+    <div class="section-title">雲端同步（多裝置）</div>
+    <div class="card">
+      <small class="hint" style="display:block;margin-bottom:8px">
+        設一組同步碼（≥6 字，當密碼用）。在另一台裝置輸入同一組碼按「下載」即可把資料帶過去。需先設好上面的服務網址。
+      </small>
+      <input type="text" id="sync-code" value="${esc(localStorage.getItem('pi_hai_sync_code')||'')}" placeholder="自訂同步碼，例如 family-code" />
+      <div class="gap8"></div>
+      <div class="row-between">
+        <button class="btn green" style="flex:1" onclick="syncUpload(this)">☁️ 上傳到雲端</button>
+        <button class="btn accent" style="flex:1" onclick="syncDownload(this)">⬇️ 從雲端下載</button>
+      </div>
+    </div>
+
     <div class="section-title">資料備份</div>
     <div class="card">
       <small class="hint" style="display:block;margin-bottom:10px">
@@ -658,6 +671,60 @@ function saveAiUrl() {
   state.aiProxyUrl = (document.getElementById('ai-url').value || '').trim();
   save();
   toast(state.aiProxyUrl ? 'AI 服務網址已儲存 ✓' : '已清除 AI 網址');
+}
+
+/* ---------------- 雲端同步（用同步碼 + Worker KV） ---------------- */
+const SYNC_CODE_KEY = 'pi_hai_sync_code';
+function syncBase() {
+  const u = (state.aiProxyUrl || '').trim().replace(/\/+$/, '');
+  return u;
+}
+function saveSyncCode() {
+  const code = (document.getElementById('sync-code').value || '').trim();
+  localStorage.setItem(SYNC_CODE_KEY, code);
+  toast('同步碼已記住');
+}
+async function syncUpload(btn) {
+  const base = syncBase();
+  const code = (document.getElementById('sync-code').value || '').trim();
+  if (!base) { toast('請先設定 AI/同步服務網址'); return; }
+  if (code.length < 6) { toast('同步碼至少 6 個字'); return; }
+  localStorage.setItem(SYNC_CODE_KEY, code);
+  const orig = btn.textContent; btn.disabled = true; btn.textContent = '☁️ 上傳中…';
+  try {
+    const res = await fetch(base + '/sync/save', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, data: state }),
+    });
+    const d = await res.json();
+    if (!res.ok || d.error) throw new Error(d.error || ('HTTP ' + res.status));
+    toast('☁️ 已上傳到雲端 ✓');
+  } catch (e) { toast('上傳失敗：' + e.message); }
+  finally { btn.disabled = false; btn.textContent = orig; }
+}
+async function syncDownload(btn) {
+  const base = syncBase();
+  const code = (document.getElementById('sync-code').value || '').trim();
+  if (!base) { toast('請先設定 AI/同步服務網址'); return; }
+  if (code.length < 6) { toast('同步碼至少 6 個字'); return; }
+  const orig = btn.textContent; btn.disabled = true; btn.textContent = '⬇️ 下載中…';
+  try {
+    const res = await fetch(base + '/sync/load', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
+    });
+    const d = await res.json();
+    if (!res.ok || d.error) throw new Error(d.error || ('HTTP ' + res.status));
+    if (!d.data || !Array.isArray(d.data.children)) { toast('雲端沒有這個同步碼的資料'); return; }
+    if (!confirm('從雲端下載會「覆蓋」這台裝置目前的資料，確定嗎？')) return;
+    localStorage.setItem(SYNC_CODE_KEY, code);
+    state = d.data;
+    if (!state.activeChild || !state.children.find(c => c.id === state.activeChild)) state.activeChild = state.children[0].id;
+    save(); go('home'); render();
+    modal(`<div class="big">☁️</div><h2>同步完成！</h2><p class="muted">已載入 ${state.children.length} 位小孩的資料</p>
+      <button class="btn block green" onclick="this.closest('.modal-mask').remove()">好</button>`);
+  } catch (e) { toast('下載失敗：' + e.message); }
+  finally { btn.disabled = false; btn.textContent = orig; }
 }
 function delChild(id) {
   if (state.children.length <= 1) return;
