@@ -1,0 +1,10 @@
+name = "pi-hai-ai"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+# 非機密設定（key 不放這裡，用 secret）
+[vars]
+ALLOWED_ORIGIN = "https://bme9675010.github.io"
+# MiniMax 端點與模型（依你的帳號可能要改，見 README）
+MINIMAX_ENDPOINT = "https://api.minimaxi.chat/v1/text/chatcompletion_v2"
+MINIMAX_MODEL = "MiniMax-Text-01"

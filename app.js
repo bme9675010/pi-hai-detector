@@ -33,6 +33,7 @@ function freshState() {
   const childId = uid();
   return {
     activeChild: childId,
+    aiProxyUrl: '',             // AI 生成後端網址（家長在管理頁設定）
     children: [{ id: childId, name: '寶貝', age: '7-9', color: D.CHILD_COLORS[1] }],
     stars: { [childId]: 0 },
     earned: { [childId]: 0 },   // 累積「賺得」的星星（兌換不扣，用於成就）
@@ -188,6 +189,90 @@ function voiceInput(id) {
   rec.onerror = (e) => { toast('語音輸入失敗：' + (e.error === 'not-allowed' ? '請允許麥克風' : e.error)); };
   rec.onend = () => { voiceActive = false; inp.classList.remove('listening'); };
   try { rec.start(); } catch (e) { voiceActive = false; }
+}
+
+/* ---------------- AI 生成（呼叫 Cloudflare Worker 代理） ---------------- */
+async function aiGenerate(type, params, btn) {
+  const url = (state.aiProxyUrl || '').trim();
+  if (!url) { toast('請先到「管理」設定 AI 服務網址'); setTimeout(() => go('children'), 600); return null; }
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '🤖 生成中…'; }
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, ...params }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    if (!data.items || !data.items.length) throw new Error('沒有產生內容');
+    return data.items;
+  } catch (e) {
+    toast('AI 生成失敗：' + e.message);
+    return null;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig; }
+  }
+}
+const VALID_DIFF = { easy:1, normal:1, hard:1 };
+const VALID_LVTYPE = { balance:1, jump:1, coordination:1, core:1, flexibility:1 };
+
+async function aiEnergy(btn) {
+  const items = await aiGenerate('energy', { age: child().age, place: energyFilter.place, time: energyFilter.time, count: 5 }, btn);
+  if (!items) return;
+  const actions = items.map(it => ({
+    name: String(it.name || '動作').slice(0, 10),
+    desc: String(it.desc || ''),
+    metric: String(it.metric || '30 秒'),
+    difficulty: VALID_DIFF[it.difficulty] ? it.difficulty : 'normal',
+    ages: [child().age], places: [energyFilter.place], times: [energyFilter.time], seconds: 30,
+    done: false,
+  }));
+  cdata().energyToday = { date: todayStr(), actions, rewarded: false };
+  save(); renderEnergy();
+  toast('🤖 AI 出了新動作！');
+}
+async function aiLevel(btn) {
+  const items = await aiGenerate('level', { age: child().age, count: 3 }, btn);
+  if (!items) return;
+  items.forEach(it => cdata().levels.push({
+    id: uid(),
+    name: String(it.name || '新關卡').slice(0, 10),
+    type: VALID_LVTYPE[it.type] ? it.type : 'core',
+    desc: String(it.desc || ''),
+    goal: String(it.goal || '完成挑戰'),
+    emoji: String(it.emoji || '⭐').slice(0, 2),
+    done: false,
+  }));
+  save(); renderLevels();
+  toast('🤖 AI 加了新關卡！');
+}
+async function aiChore(btn) {
+  const items = await aiGenerate('chore', { age: child().age, count: 3 }, btn);
+  if (!items) return;
+  if (!Array.isArray(state.customChores)) state.customChores = [];
+  items.forEach(it => state.customChores.push({
+    id: uid(),
+    name: String(it.name || '家事').slice(0, 14),
+    desc: String(it.desc || '幫忙做家事'),
+    age: AGE_RANK[it.age] ? it.age : child().age,
+    stars: Math.min(3, Math.max(1, parseInt(it.stars) || 1)),
+    emoji: String(it.emoji || '🧹').slice(0, 2),
+  }));
+  save(); renderChores();
+  toast('🤖 AI 加了新家事！');
+}
+async function aiFlow(btn) {
+  const items = await aiGenerate('flow', { age: child().age, flow: activeFlow, count: 4 }, btn);
+  if (!items) return;
+  const f = cdata().flows[activeFlow];
+  items.forEach(it => {
+    const text = String(it.text || it.name || '').trim();
+    if (text) f.steps.push({ id: uid(), text: text.slice(0, 12) });
+  });
+  save(); renderFlows();
+  toast('🤖 AI 建議了新步驟！');
 }
 
 /* ---------------- 路由 ---------------- */
@@ -450,6 +535,16 @@ function renderChildren() {
       <button class="btn ghost sm" onclick="toggleTheme()">切換</button>
     </div>
 
+    <div class="section-title">AI 生成（選用）</div>
+    <div class="card">
+      <small class="hint" style="display:block;margin-bottom:8px">
+        貼上你的 Cloudflare Worker 網址，各任務就會出現「🎲 AI 生成」。沒設定也能正常用。
+      </small>
+      <input type="text" id="ai-url" value="${esc(state.aiProxyUrl||'')}" placeholder="https://pi-hai-ai.xxx.workers.dev" />
+      <div class="gap8"></div>
+      <button class="btn block green" onclick="saveAiUrl()">儲存網址</button>
+    </div>
+
     <div class="section-title">資料備份</div>
     <div class="card">
       <small class="hint" style="display:block;margin-bottom:10px">
@@ -559,6 +654,11 @@ function saveChild() {
   document.querySelector('.modal-mask')?.remove();
   render();
 }
+function saveAiUrl() {
+  state.aiProxyUrl = (document.getElementById('ai-url').value || '').trim();
+  save();
+  toast(state.aiProxyUrl ? 'AI 服務網址已儲存 ✓' : '已清除 AI 網址');
+}
 function delChild(id) {
   if (state.children.length <= 1) return;
   if (!confirm('確定要刪除這個小孩的所有資料嗎？')) return;
@@ -616,10 +716,15 @@ function renderEnergy() {
         ${isAwarded('energy')?'今日已完成 ✓':'完成今日放電！'}
       </button>
       <div class="gap8"></div>
-      <button class="btn block ghost" onclick="regenEnergy()">🔄 換一組</button>`;
+      <div class="row-between">
+        <button class="btn ghost" style="flex:1" onclick="regenEnergy()">🔄 換一組</button>
+        <button class="btn purple" style="flex:1" onclick="aiEnergy(this)">🎲 AI 出新動作</button>
+      </div>`;
   } else {
     taskHtml = `<div class="empty"><div class="e">⚡</div>選好條件，按下方按鈕<br>幫 ${esc(c.name)} 產生今日放電任務！</div>
-      <button class="btn block" onclick="regenEnergy()">產生今日放電任務 💥</button>`;
+      <button class="btn block" onclick="regenEnergy()">產生今日放電任務 💥</button>
+      <div class="gap8"></div>
+      <button class="btn block purple" onclick="aiEnergy(this)">🎲 用 AI 產生</button>`;
   }
 
   $app.innerHTML = `
@@ -826,6 +931,7 @@ function renderLevels() {
     ${items}
     ${done>0?`<button class="btn block ghost" onclick="resetLevels()">重新開始所有關卡</button>`:''}
 
+    <button class="btn block purple" onclick="aiLevel(this)">🎲 AI 加新關卡</button>
     <div class="section-title">自己加關卡</div>
     <div class="card">
       <div class="voice-field"><input type="text" id="lv-name" placeholder="關卡名稱，例如：超人飛行" maxlength="10" />${micBtn('lv-name')}</div>
@@ -926,6 +1032,8 @@ function renderFlows() {
       ${isAwarded('flow:'+activeFlow) ? '今天已完成 ✓' : allDone ? '完成整個流程！⭐' : '全部打勾後可領星星'}
     </button>
     <div class="gap8"></div>
+    <button class="btn block purple" onclick="aiFlow(this)">🎲 AI 建議${f.title}步驟</button>
+    <div class="gap8"></div>
     <small class="hint">提示：用 ▲▼ 調整步驟順序（電腦也可拖曳）</small>
   `;
 }
@@ -1015,6 +1123,7 @@ function renderChores() {
     <div class="gap8"></div>
     <small class="hint center" style="display:block">依 ${esc(child().name)}（${child().age} 歲）抽 1～3 個適齡任務</small>
 
+    <button class="btn block purple" onclick="aiChore(this)">🎲 AI 加新家事</button>
     <div class="section-title">自己加家事</div>
     ${custom}
     <div class="card">
