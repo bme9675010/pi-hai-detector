@@ -12,4 +12,4 @@ MINIMAX_MODEL = "MiniMax-Text-01"
 # 雲端同步用的 KV（執行 `wrangler kv namespace create SYNC` 後把 id 貼進來）
 [[kv_namespaces]]
 binding = "SYNC"
-id = "PASTE_KV_ID_HERE"
+id = "d760253f9db24725b6ced1fa78842db8"
