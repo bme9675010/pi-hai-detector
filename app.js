@@ -605,7 +605,7 @@ function renderChildren() {
     <div class="section-title">管理頁密碼鎖</div>
     <div class="card">
       <small class="hint" style="display:block;margin-bottom:8px">
-        開啟後，進入「管理」要先輸入 4 位數字密碼，避免小孩誤改設定。（這是防手殘的閘門，非高強度資安）
+        開啟後，每次進入「管理」都要輸入 4 位數字密碼（離開就重新上鎖），避免小孩誤改設定。（這是防手殘的閘門，非高強度資安）
       </small>
       ${hasPin()
         ? `<div class="row-between"><strong>🔒 密碼鎖已開啟</strong>
@@ -1585,6 +1585,7 @@ function setStatusNote(v) { ensureToday().note = v; save(); }
    =========================================================== */
 function render() {
   const r = currentRoute();
+  if (r !== 'children') pinUnlocked = false;   // 一離開管理頁就重新上鎖
   window.scrollTo(0,0);
   ({
     home: renderHome,
