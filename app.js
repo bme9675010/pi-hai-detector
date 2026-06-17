@@ -1583,6 +1583,23 @@ function setStatusNote(v) { ensureToday().note = v; save(); }
 /* ===========================================================
    主 render
    =========================================================== */
+const TABS = [
+  { r:'home',   i:'🏠', l:'首頁' },
+  { r:'energy', i:'⚡', l:'放電' },
+  { r:'levels', i:'🏆', l:'闖關' },
+  { r:'chores', i:'🎡', l:'家事' },
+  { r:'status', i:'📝', l:'狀態' },
+];
+function renderTabbar() {
+  const cur = currentRoute();
+  const bar = document.getElementById('tabbar');
+  if (!bar) return;
+  bar.innerHTML = TABS.map(t =>
+    `<button class="tab ${cur===t.r?'on':''}" onclick="go('${t.r}')">
+      <span class="ti">${t.i}</span><span class="tl">${t.l}</span>
+    </button>`).join('');
+}
+
 function render() {
   const r = currentRoute();
   if (r !== 'children') pinUnlocked = false;   // 一離開管理頁就重新上鎖
@@ -1598,6 +1615,9 @@ function render() {
     rewards: renderRewards,
     history: renderHistory,
   }[r] || renderHome)();
+  renderTabbar();
+  // 頁面淡入動畫（重新觸發）
+  $app.classList.remove('page-in'); void $app.offsetWidth; $app.classList.add('page-in');
 }
 
 applyTheme();
