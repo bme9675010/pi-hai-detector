@@ -120,6 +120,44 @@ function toggleTheme() {
   if (currentRoute() === 'children') render();
 }
 
+/* ---------------- 管理頁 PIN 鎖（本機閘門，防小孩亂動） ---------------- */
+const PIN_KEY = 'pi_hai_pin';
+let pinUnlocked = false;                       // 本次開啟 App 已解鎖就不再問
+function hasPin() { return !!localStorage.getItem(PIN_KEY); }
+function setPin() {
+  const v = (document.getElementById('pin-set').value || '').trim();
+  if (!/^\d{4}$/.test(v)) { toast('請輸入 4 位數字'); return; }
+  localStorage.setItem(PIN_KEY, v); pinUnlocked = true;
+  toast('已開啟密碼鎖 🔒'); renderChildren();
+}
+function removePin() {
+  if (!confirm('確定要關閉密碼鎖嗎？')) return;
+  localStorage.removeItem(PIN_KEY);
+  toast('已關閉密碼鎖'); renderChildren();
+}
+function tryUnlockPin() {
+  const v = (document.getElementById('pin-in').value || '').trim();
+  if (v === localStorage.getItem(PIN_KEY)) { pinUnlocked = true; renderChildren(); }
+  else toast('密碼不對，再試一次');
+}
+function renderPinGate() {
+  $app.innerHTML = `
+    ${topbar('管理（需要密碼）', false)}
+    <div class="card center" style="margin-top:30px">
+      <div style="font-size:3rem">🔒</div>
+      <h2 style="margin:6px 0">請輸入管理密碼</h2>
+      <p class="muted" style="font-size:.85rem">這是為了避免小孩誤改設定</p>
+      <input type="password" id="pin-in" inputmode="numeric" maxlength="4" placeholder="••••"
+        style="text-align:center;font-size:1.6rem;letter-spacing:8px;max-width:160px;margin:8px auto"
+        onkeydown="if(event.key==='Enter')tryUnlockPin()" />
+      <div class="gap8"></div>
+      <button class="btn block green" onclick="tryUnlockPin()">解鎖</button>
+      <div class="gap8"></div>
+      <small class="hint">忘記密碼？清除瀏覽器網站資料可重設（但本機資料也會清空，請先用雲端同步或匯出備份）</small>
+    </div>
+  `;
+}
+
 /* 取得目前小孩 & 其資料（自動補齊缺漏結構） */
 function child() { return state.children.find(c => c.id === state.activeChild) || state.children[0]; }
 function cdata() {
@@ -513,6 +551,7 @@ function selectChild(id) { state.activeChild = id; save(); render(); }
    =========================================================== */
 let childForm = null; // 編輯中的暫存
 function renderChildren() {
+  if (hasPin() && !pinUnlocked) { renderPinGate(); return; }   // 未解鎖先擋
   const list = state.children.map(ch => `
     <div class="card task-item">
       <span class="n" style="background:${ch.color};color:#fff">${esc(ch.name.slice(0,1))}</span>
@@ -550,12 +589,28 @@ function renderChildren() {
       <small class="hint" style="display:block;margin-bottom:8px">
         設一組同步碼（≥6 字，當密碼用）。在另一台裝置輸入同一組碼按「下載」即可把資料帶過去。需先設好上面的服務網址。
       </small>
-      <input type="text" id="sync-code" value="${esc(localStorage.getItem('pi_hai_sync_code')||'')}" placeholder="自訂同步碼，例如 family-code" />
+      <div class="row-between">
+        <input type="password" id="sync-code" value="${esc(localStorage.getItem('pi_hai_sync_code')||'')}" placeholder="自訂同步碼，例如 family-code" style="flex:1" />
+        <button class="btn ghost sm" onclick="toggleSyncReveal(this)">👁️</button>
+      </div>
       <div class="gap8"></div>
       <div class="row-between">
         <button class="btn green" style="flex:1" onclick="syncUpload(this)">☁️ 上傳到雲端</button>
         <button class="btn accent" style="flex:1" onclick="syncDownload(this)">⬇️ 從雲端下載</button>
       </div>
+    </div>
+
+    <div class="section-title">管理頁密碼鎖</div>
+    <div class="card">
+      <small class="hint" style="display:block;margin-bottom:8px">
+        開啟後，進入「管理」要先輸入 4 位數字密碼，避免小孩誤改設定。（這是防手殘的閘門，非高強度資安）
+      </small>
+      ${hasPin()
+        ? `<div class="row-between"><strong>🔒 密碼鎖已開啟</strong>
+            <button class="btn ghost sm" onclick="removePin()">關閉</button></div>`
+        : `<div class="row-between">
+            <input type="password" id="pin-set" inputmode="numeric" maxlength="4" placeholder="設 4 位數字" style="flex:1" />
+            <button class="btn green" onclick="setPin()">開啟</button></div>`}
     </div>
 
     <div class="section-title">資料備份</div>
@@ -683,6 +738,11 @@ function saveSyncCode() {
   const code = (document.getElementById('sync-code').value || '').trim();
   localStorage.setItem(SYNC_CODE_KEY, code);
   toast('同步碼已記住');
+}
+function toggleSyncReveal(btn) {
+  const inp = document.getElementById('sync-code');
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+  btn.textContent = inp.type === 'password' ? '👁️' : '🙈';
 }
 async function syncUpload(btn) {
   const base = syncBase();
