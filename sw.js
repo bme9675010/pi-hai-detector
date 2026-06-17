@@ -1,5 +1,5 @@
 /* 屁孩偵測器 Service Worker — 離線快取 */
-const CACHE = 'pi-hai-v19';
+const CACHE = 'pi-hai-v20';
 const ASSETS = [
   './', './index.html', './styles.css', './data.js', './weather.js', './app.js',
   './manifest.json', './icon.svg'

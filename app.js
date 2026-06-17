@@ -103,7 +103,7 @@ function computeStreak(cd) {
   while (days.has(dateStr(d))) { streak++; d.setDate(d.getDate() - 1); }
   return streak;
 }
-function save() { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
+function save() { state.updatedAt = Date.now(); localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
 
 /* ---------------- 深色模式 ---------------- */
 const THEME_KEY = 'pi_hai_theme';
@@ -600,6 +600,12 @@ function renderChildren() {
         <button class="btn green" style="flex:1" onclick="syncUpload(this)">☁️ 上傳到雲端</button>
         <button class="btn accent" style="flex:1" onclick="syncDownload(this)">⬇️ 從雲端下載</button>
       </div>
+      <div class="gap8"></div>
+      <div class="row-between">
+        <strong style="font-size:.9rem">${localStorage.getItem('pi_hai_autosync')==='0'?'⛅ 開啟 App 自動下載：關':'☁️ 開啟 App 自動下載：開'}</strong>
+        <button class="btn ghost sm" onclick="toggleAutoSync()">切換</button>
+      </div>
+      <small class="hint" style="display:block;margin-top:6px">開啟後，每次打開 App 會自動抓雲端最新（只有雲端較新才覆蓋，不會蓋掉本機新改的）。改完仍要按「上傳」才會同步給別台。</small>
     </div>
 
     <div class="section-title">管理頁密碼鎖</div>
@@ -746,12 +752,19 @@ function toggleSyncReveal(btn) {
   inp.type = inp.type === 'password' ? 'text' : 'password';
   btn.textContent = inp.type === 'password' ? '👁️' : '🙈';
 }
+function toggleAutoSync() {
+  const off = localStorage.getItem('pi_hai_autosync') === '0';
+  localStorage.setItem('pi_hai_autosync', off ? '1' : '0');   // 切換
+  toast(off ? '已開啟自動下載' : '已關閉自動下載');
+  renderChildren();
+}
 async function syncUpload(btn) {
   const base = syncBase();
   const code = (document.getElementById('sync-code').value || '').trim();
   if (!base) { toast('請先設定 AI/同步服務網址'); return; }
   if (code.length < 6) { toast('同步碼至少 6 個字'); return; }
   localStorage.setItem(SYNC_CODE_KEY, code);
+  save();   // 更新時間戳，讓雲端那份是最新
   const orig = btn.textContent; btn.disabled = true; btn.textContent = '☁️ 上傳中…';
   try {
     const res = await fetch(base + '/sync/save', {
@@ -780,13 +793,40 @@ async function syncDownload(btn) {
     if (!d.data || !Array.isArray(d.data.children)) { toast('雲端沒有這個同步碼的資料'); return; }
     if (!confirm('從雲端下載會「覆蓋」這台裝置目前的資料，確定嗎？')) return;
     localStorage.setItem(SYNC_CODE_KEY, code);
-    state = d.data;
-    if (!state.activeChild || !state.children.find(c => c.id === state.activeChild)) state.activeChild = state.children[0].id;
-    save(); go('home'); render();
+    applyCloudState(d.data);
+    go('home'); render();
     modal(`<div class="big">☁️</div><h2>同步完成！</h2><p class="muted">已載入 ${state.children.length} 位小孩的資料</p>
       <button class="btn block green" onclick="this.closest('.modal-mask').remove()">好</button>`);
   } catch (e) { toast('下載失敗：' + e.message); }
   finally { btn.disabled = false; btn.textContent = orig; }
+}
+// 套用雲端資料到本機（保留雲端的時間戳，不重新 bump）
+function applyCloudState(data) {
+  state = data;
+  if (!state.activeChild || !state.children.find(c => c.id === state.activeChild)) state.activeChild = state.children[0].id;
+  localStorage.setItem(STORE_KEY, JSON.stringify(state));
+}
+// 開啟 App 自動從雲端拉最新（只有雲端較新才覆蓋，避免蓋掉本機新修改）
+async function autoSyncPull() {
+  if (localStorage.getItem('pi_hai_autosync') === '0') return;     // 已關閉
+  const base = syncBase();
+  const code = (localStorage.getItem(SYNC_CODE_KEY) || '').trim();
+  if (!base || code.length < 6) return;                            // 沒設定同步就跳過
+  try {
+    const res = await fetch(base + '/sync/load', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
+    });
+    const d = await res.json();
+    if (!res.ok || d.error || !d.data || !Array.isArray(d.data.children)) return;
+    const cloudT = d.data.updatedAt || 0;
+    const localT = state.updatedAt || 0;
+    if (cloudT > localT) {                                          // 雲端較新才套用
+      applyCloudState(d.data);
+      render();
+      toast('☁️ 已自動同步雲端最新資料');
+    }
+  } catch (e) { /* 離線或失敗就略過，用本機 */ }
 }
 function delChild(id) {
   if (state.children.length <= 1) return;
@@ -1622,3 +1662,13 @@ function render() {
 
 applyTheme();
 render();
+autoSyncPull();   // 開啟 App 自動拉雲端最新
+
+// PWA 從背景回到前景時也檢查一次（至少間隔 20 秒，避免頻繁）
+let lastAutoPull = Date.now();
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && Date.now() - lastAutoPull > 20000) {
+    lastAutoPull = Date.now();
+    autoSyncPull();
+  }
+});
