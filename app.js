@@ -232,6 +232,7 @@ function voiceInput(id) {
 }
 
 /* ---------------- AI 生成（呼叫 Cloudflare Worker 代理） ---------------- */
+function aiEnabled() { return !!(state.aiProxyUrl || '').trim(); }   // 沒設定網址就不顯示 AI 按鈕
 async function aiGenerate(type, params, btn) {
   const url = (state.aiProxyUrl || '').trim();
   if (!url) { toast('請先到「管理」設定 AI 服務網址'); setTimeout(() => go('children'), 600); return null; }
@@ -454,14 +455,22 @@ function renderHome() {
 
 /* 首頁用的精簡天氣條 */
 function homeWeatherHTML() {
-  if (weatherFailed) return `<div id="home-weather"></div>`;   // 失敗就不顯示，保持首頁乾淨
+  // 讀取失敗或還沒定位 → 顯示明顯的「開啟定位」按鈕（避免使用者錯過授權）
+  if (weatherFailed) {
+    return `<div id="home-weather" class="card" style="padding:12px 16px">
+      <div class="row-between"><span class="muted">📍 想看在地天氣？</span>
+        <button class="btn accent sm" onclick="relocateWeather()">開啟定位</button></div></div>`;
+  }
   if (!weatherState) return `<div id="home-weather" class="card" style="padding:12px 16px"><span class="muted">🌤️ 讀取天氣中…</span></div>`;
   const w = weatherState;
+  const isDefault = w.isDefault || (w.place && w.place.indexOf('預設') >= 0);
   return `<div id="home-weather" class="card" style="padding:12px 16px">
     <div class="row-between">
       <div><span style="font-size:1.2rem">${w.emoji}</span> <strong>${w.temp}°</strong> ${esc(w.label)}
         <small class="hint">· ${esc(w.place)}</small></div>
-      <button class="btn ghost sm" onclick="go('energy')">去放電 →</button>
+      ${isDefault
+        ? `<button class="btn accent sm" onclick="relocateWeather()">📍 用我的位置</button>`
+        : `<button class="btn ghost sm" onclick="go('energy')">去放電 →</button>`}
     </div>
   </div>`;
 }
@@ -742,11 +751,6 @@ function syncBase() {
   const u = (state.aiProxyUrl || '').trim().replace(/\/+$/, '');
   return u;
 }
-function saveSyncCode() {
-  const code = (document.getElementById('sync-code').value || '').trim();
-  localStorage.setItem(SYNC_CODE_KEY, code);
-  toast('同步碼已記住');
-}
 function toggleSyncReveal(btn) {
   const inp = document.getElementById('sync-code');
   inp.type = inp.type === 'password' ? 'text' : 'password';
@@ -885,15 +889,14 @@ function renderEnergy() {
         ${isAwarded('energy')?'今日已完成 ✓':'完成今日放電！'}
       </button>
       <div class="gap8"></div>
-      <div class="row-between">
+      ${aiEnabled() ? `<div class="row-between">
         <button class="btn ghost" style="flex:1" onclick="regenEnergy()">🔄 換一組</button>
         <button class="btn purple" style="flex:1" onclick="aiEnergy(this)">🎲 AI 出新動作</button>
-      </div>`;
+      </div>` : `<button class="btn block ghost" onclick="regenEnergy()">🔄 換一組</button>`}`;
   } else {
     taskHtml = `<div class="empty"><div class="e">⚡</div>選好條件，按下方按鈕<br>幫 ${esc(c.name)} 產生今日放電任務！</div>
       <button class="btn block" onclick="regenEnergy()">產生今日放電任務 💥</button>
-      <div class="gap8"></div>
-      <button class="btn block purple" onclick="aiEnergy(this)">🎲 用 AI 產生</button>`;
+      ${aiEnabled() ? `<div class="gap8"></div><button class="btn block purple" onclick="aiEnergy(this)">🎲 用 AI 產生</button>` : ''}`;
   }
 
   $app.innerHTML = `
@@ -1100,7 +1103,7 @@ function renderLevels() {
     ${items}
     ${done>0?`<button class="btn block ghost" onclick="resetLevels()">重新開始所有關卡</button>`:''}
 
-    <button class="btn block purple" onclick="aiLevel(this)">🎲 AI 加新關卡</button>
+    ${aiEnabled() ? `<button class="btn block purple" onclick="aiLevel(this)">🎲 AI 加新關卡</button>` : ''}
     <div class="section-title">自己加關卡</div>
     <div class="card">
       <div class="voice-field"><input type="text" id="lv-name" placeholder="關卡名稱，例如：超人飛行" maxlength="10" />${micBtn('lv-name')}</div>
@@ -1200,8 +1203,7 @@ function renderFlows() {
     <button class="btn block green" ${(isAwarded('flow:'+activeFlow)||!allDone)?'disabled':''} onclick="finishFlow(event)">
       ${isAwarded('flow:'+activeFlow) ? '今天已完成 ✓' : allDone ? '完成整個流程！⭐' : '全部打勾後可領星星'}
     </button>
-    <div class="gap8"></div>
-    <button class="btn block purple" onclick="aiFlow(this)">🎲 AI 建議${f.title}步驟</button>
+    ${aiEnabled() ? `<div class="gap8"></div><button class="btn block purple" onclick="aiFlow(this)">🎲 AI 建議${f.title}步驟</button>` : ''}
     <div class="gap8"></div>
     <small class="hint">提示：用 ▲▼ 調整步驟順序（電腦也可拖曳）</small>
   `;
@@ -1292,7 +1294,7 @@ function renderChores() {
     <div class="gap8"></div>
     <small class="hint center" style="display:block">依 ${esc(child().name)}（${child().age} 歲）抽 1～3 個適齡任務</small>
 
-    <button class="btn block purple" onclick="aiChore(this)">🎲 AI 加新家事</button>
+    ${aiEnabled() ? `<button class="btn block purple" onclick="aiChore(this)">🎲 AI 加新家事</button>` : ''}
     <div class="section-title">自己加家事</div>
     ${custom}
     <div class="card">
@@ -1627,6 +1629,7 @@ const TABS = [
   { r:'home',   i:'🏠', l:'首頁' },
   { r:'energy', i:'⚡', l:'放電' },
   { r:'levels', i:'🏆', l:'闖關' },
+  { r:'flows',  i:'📋', l:'流程' },
   { r:'chores', i:'🎡', l:'家事' },
   { r:'status', i:'📝', l:'狀態' },
 ];

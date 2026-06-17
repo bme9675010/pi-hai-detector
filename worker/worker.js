@@ -18,6 +18,13 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { headers: cors });
     if (request.method !== 'POST') return json({ error: 'POST only' }, 405, cors);
 
+    // 防濫用：只接受來自本 App 網域的請求（擋掉別的網站與大部分亂打）
+    const allowed = env.ALLOWED_ORIGIN || '';
+    const origin = request.headers.get('Origin');
+    if (allowed && allowed !== '*' && origin !== allowed) {
+      return json({ error: 'forbidden origin' }, 403, cors);
+    }
+
     let body;
     try { body = await request.json(); } catch { return json({ error: 'bad json' }, 400, cors); }
 
