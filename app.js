@@ -127,8 +127,10 @@ function hasPin() { return !!localStorage.getItem(PIN_KEY); }
 function setPin() {
   const v = (document.getElementById('pin-set').value || '').trim();
   if (!/^\d{4}$/.test(v)) { toast('請輸入 4 位數字'); return; }
-  localStorage.setItem(PIN_KEY, v); pinUnlocked = true;
-  toast('已開啟密碼鎖 🔒'); renderChildren();
+  localStorage.setItem(PIN_KEY, v);
+  pinUnlocked = false;                 // 立刻生效：下次進管理就要輸入
+  toast('已開啟密碼鎖 🔒 下次進入管理需要密碼');
+  go('home');
 }
 function removePin() {
   if (!confirm('確定要關閉密碼鎖嗎？')) return;
