@@ -1098,7 +1098,7 @@ function refreshWeatherDOM() {
 }
 async function loadWeather() {
   if (weatherState || weatherFailed) { refreshWeatherDOM(); return; }  // 已有結果就直接套用
-  try { weatherState = await WEATHER.getWeather(); }
+  try { weatherState = await WEATHER.getWeather(false, syncBase()); }
   catch (e) { weatherFailed = true; }
   refreshWeatherDOM();
 }
@@ -1109,7 +1109,7 @@ function relocateWeather() {
   const el = document.getElementById('wbanner');
   if (el) el.innerHTML = '<span class="muted">📍 重新定位中…（請按「允許」）</span>';
   (async () => {
-    try { weatherState = await WEATHER.getWeather(true); }
+    try { weatherState = await WEATHER.getWeather(true, syncBase()); }
     catch (e) { weatherFailed = true; }
     refreshWeatherDOM();
   })();

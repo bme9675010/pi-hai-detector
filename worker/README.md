@@ -33,6 +33,16 @@
 
 5. 把那個網址貼到 App →「管理」頁的「AI 生成服務網址」欄位，存檔即可。
 
+## 天氣改用中央氣象署 CWA（台灣較準）
+
+設定 CWA 授權碼（到 https://opendata.cwa.gov.tw/ 免費註冊取得），存成 secret 後重新部署：
+```
+wrangler secret put CWA_KEY
+wrangler deploy
+```
+沒設定 CWA_KEY 時，天氣會自動用 Open-Meteo（全球模型）。
+前端有設定「AI/同步服務網址」就會自動走這支 Worker 拿 CWA 天氣。
+
 ## MiniMax 設定注意
 
 `wrangler.toml` 裡的 `MINIMAX_ENDPOINT` 和 `MINIMAX_MODEL` 預設是國際站。
