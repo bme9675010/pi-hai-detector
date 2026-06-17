@@ -38,7 +38,9 @@ function freshState() {
     stars: { [childId]: 0 },
     earned: { [childId]: 0 },   // 累積「賺得」的星星（兌換不扣，用於成就）
     // 每個小孩的各模組資料： data[childId] = {...}
-    data: { [childId]: blankChildData() }
+    data: { [childId]: blankChildData() },
+    _sharedT: 0,                // 共用設定（獎勵/自訂內容）最後更新時間
+    _deleted: {}                // 已刪除小孩的墓碑 {childId: time}
   };
 }
 function blankChildData() {
@@ -53,7 +55,8 @@ function blankChildData() {
     status: {},               // status[date] = {spirit, mood, ...}
     redeemLog: [],            // 兌換紀錄 [{name, cost, date}]
     awarded: { date:'', keys:[] }, // 今日已領星星的任務，防止重複領
-    activeDays: []            // 有完成任務的日期（算連續天數 streak）
+    activeDays: [],           // 有完成任務的日期（算連續天數 streak）
+    _t: Date.now()            // 此小孩資料最後更新時間（雲端逐筆合併用）
   };
 }
 /* 確保獎勵清單存在（相容舊版資料） */
@@ -103,7 +106,14 @@ function computeStreak(cd) {
   while (days.has(dateStr(d))) { streak++; d.setDate(d.getDate() - 1); }
   return streak;
 }
-function save() { state.updatedAt = Date.now(); localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
+function save() {
+  state.updatedAt = Date.now();
+  // 標記「目前這個小孩」剛被更新（雲端逐筆合併用）
+  const cd = state.data[state.activeChild];
+  if (cd) cd._t = Date.now();
+  localStorage.setItem(STORE_KEY, JSON.stringify(state));
+}
+function bumpShared() { state._sharedT = Date.now(); }   // 共用設定有變更時呼叫
 
 /* ---------------- 深色模式 ---------------- */
 const THEME_KEY = 'pi_hai_theme';
@@ -598,23 +608,20 @@ function renderChildren() {
     <div class="section-title">雲端同步（多裝置）</div>
     <div class="card">
       <small class="hint" style="display:block;margin-bottom:8px">
-        設一組同步碼（≥6 字，當密碼用）。在另一台裝置輸入同一組碼按「下載」即可把資料帶過去。需先設好上面的服務網址。
+        全家用同一組同步碼（≥6 字）。每個小孩的進度各自合併，<b>不同裝置同時用也不會互相蓋掉</b>。需先設好上面的服務網址。
       </small>
       <div class="row-between">
-        <input type="password" id="sync-code" value="${esc(localStorage.getItem('pi_hai_sync_code')||'')}" placeholder="自訂同步碼，例如 family-code" style="flex:1" />
+        <input type="password" id="sync-code" value="${esc(localStorage.getItem('pi_hai_sync_code')||'')}" placeholder="全家共用同步碼，例如 family-code" style="flex:1" />
         <button class="btn ghost sm" onclick="toggleSyncReveal(this)">👁️</button>
       </div>
       <div class="gap8"></div>
-      <div class="row-between">
-        <button class="btn green" style="flex:1" onclick="syncUpload(this)">☁️ 上傳到雲端</button>
-        <button class="btn accent" style="flex:1" onclick="syncDownload(this)">⬇️ 從雲端下載</button>
-      </div>
+      <button class="btn block green" onclick="syncNow(false,this)">☁️ 立即同步（雙向合併）</button>
       <div class="gap8"></div>
       <div class="row-between">
-        <strong style="font-size:.9rem">${localStorage.getItem('pi_hai_autosync')==='0'?'⛅ 開啟 App 自動下載：關':'☁️ 開啟 App 自動下載：開'}</strong>
+        <strong style="font-size:.9rem">${localStorage.getItem('pi_hai_autosync')==='0'?'⛅ 開啟 App 自動同步：關':'☁️ 開啟 App 自動同步：開'}</strong>
         <button class="btn ghost sm" onclick="toggleAutoSync()">切換</button>
       </div>
-      <small class="hint" style="display:block;margin-top:6px">開啟後，每次打開 App 會自動抓雲端最新（只有雲端較新才覆蓋，不會蓋掉本機新改的）。改完仍要按「上傳」才會同步給別台。</small>
+      <small class="hint" style="display:block;margin-top:6px">開啟後，每次打開 App 會自動雙向同步（小孩各自的進度合併，不互相覆蓋）。同一個小孩在兩台同時改，才會以較晚的為準。</small>
     </div>
 
     <div class="section-title">管理頁密碼鎖</div>
@@ -729,6 +736,8 @@ function saveChild() {
   if (childForm.id) {
     const ch = state.children.find(c=>c.id===childForm.id);
     Object.assign(ch, { name, age: childForm.age, color: childForm.color });
+    if (state.data[childForm.id]) state.data[childForm.id]._t = Date.now();  // 標記此小孩有更新
+    state.activeChild = childForm.id;   // 讓 save() 標記到正確的小孩
   } else {
     const nid = uid();
     state.children.push({ id:nid, name, age:childForm.age, color:childForm.color });
@@ -759,84 +768,93 @@ function toggleSyncReveal(btn) {
 function toggleAutoSync() {
   const off = localStorage.getItem('pi_hai_autosync') === '0';
   localStorage.setItem('pi_hai_autosync', off ? '1' : '0');   // 切換
-  toast(off ? '已開啟自動下載' : '已關閉自動下載');
+  toast(off ? '已開啟自動同步' : '已關閉自動同步');
   renderChildren();
 }
-async function syncUpload(btn) {
-  const base = syncBase();
-  const code = (document.getElementById('sync-code').value || '').trim();
-  if (!base) { toast('請先設定 AI/同步服務網址'); return; }
-  if (code.length < 6) { toast('同步碼至少 6 個字'); return; }
-  localStorage.setItem(SYNC_CODE_KEY, code);
-  save();   // 更新時間戳，讓雲端那份是最新
-  const orig = btn.textContent; btn.disabled = true; btn.textContent = '☁️ 上傳中…';
-  try {
-    const res = await fetch(base + '/sync/save', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, data: state }),
-    });
-    const d = await res.json();
-    if (!res.ok || d.error) throw new Error(d.error || ('HTTP ' + res.status));
-    toast('☁️ 已上傳到雲端 ✓');
-  } catch (e) { toast('上傳失敗：' + e.message); }
-  finally { btn.disabled = false; btn.textContent = orig; }
+// 把本機資料打包成「雲端文件」格式（每個小孩各帶時間戳）
+function buildCloudDoc() {
+  const doc = {
+    children: {},
+    shared: {
+      rewards: Array.isArray(state.rewards) ? state.rewards : [],   // 不在這裡 ensure，避免觸發 save 改到時間戳
+      customChores: state.customChores || [],
+      customActions: state.customActions || [],
+      t: state._sharedT || 0,
+    },
+    deleted: state._deleted || {},
+  };
+  for (const c of state.children) {
+    const cid = c.id;
+    const cd = state.data[cid] || blankChildData();
+    doc.children[cid] = {
+      profile: { id: cid, name: c.name, age: c.age, color: c.color },
+      stars: state.stars[cid] || 0,
+      earned: (state.earned && state.earned[cid]) || 0,
+      data: cd,
+      t: cd._t || 0,
+    };
+  }
+  return doc;
 }
-async function syncDownload(btn) {
-  const base = syncBase();
-  const code = (document.getElementById('sync-code').value || '').trim();
-  if (!base) { toast('請先設定 AI/同步服務網址'); return; }
-  if (code.length < 6) { toast('同步碼至少 6 個字'); return; }
-  const orig = btn.textContent; btn.disabled = true; btn.textContent = '⬇️ 下載中…';
-  try {
-    const res = await fetch(base + '/sync/load', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code }),
-    });
-    const d = await res.json();
-    if (!res.ok || d.error) throw new Error(d.error || ('HTTP ' + res.status));
-    if (!d.data || !Array.isArray(d.data.children)) { toast('雲端沒有這個同步碼的資料'); return; }
-    if (!confirm('從雲端下載會「覆蓋」這台裝置目前的資料，確定嗎？')) return;
-    localStorage.setItem(SYNC_CODE_KEY, code);
-    applyCloudState(d.data);
-    go('home'); render();
-    modal(`<div class="big">☁️</div><h2>同步完成！</h2><p class="muted">已載入 ${state.children.length} 位小孩的資料</p>
-      <button class="btn block green" onclick="this.closest('.modal-mask').remove()">好</button>`);
-  } catch (e) { toast('下載失敗：' + e.message); }
-  finally { btn.disabled = false; btn.textContent = orig; }
-}
-// 套用雲端資料到本機（保留雲端的時間戳，不重新 bump）
-function applyCloudState(data) {
-  state = data;
+// 把合併後的雲端文件套回本機（保留本機專屬：AI 網址、目前選擇的小孩）
+function applyMerged(doc) {
+  if (!doc || !doc.children) return false;
+  const children = [], stars = {}, earned = {}, data = {};
+  for (const cid in doc.children) {
+    const rec = doc.children[cid];
+    if (!rec || !rec.profile) continue;
+    children.push(rec.profile);
+    stars[cid] = rec.stars || 0;
+    earned[cid] = rec.earned || 0;
+    data[cid] = rec.data || blankChildData();
+  }
+  if (!children.length) return false;             // 雲端是空的就別清掉本機
+  state.children = children; state.stars = stars; state.earned = earned; state.data = data;
+  if (doc.shared) {
+    if (Array.isArray(doc.shared.rewards)) state.rewards = doc.shared.rewards;
+    state.customChores = doc.shared.customChores || [];
+    state.customActions = doc.shared.customActions || [];
+    state._sharedT = doc.shared.t || 0;
+  }
+  state._deleted = doc.deleted || {};
   if (!state.activeChild || !state.children.find(c => c.id === state.activeChild)) state.activeChild = state.children[0].id;
   localStorage.setItem(STORE_KEY, JSON.stringify(state));
+  return true;
 }
-// 開啟 App 自動從雲端拉最新（只有雲端較新才覆蓋，避免蓋掉本機新修改）
-async function autoSyncPull() {
-  if (localStorage.getItem('pi_hai_autosync') === '0') return;     // 已關閉
+// 雙向同步：把本機送上去合併，再把合併結果套回（不會互相覆蓋，逐小孩比時間戳）
+async function syncNow(silent, btn) {
   const base = syncBase();
-  const code = (localStorage.getItem(SYNC_CODE_KEY) || '').trim();
-  if (!base || code.length < 6) return;                            // 沒設定同步就跳過
+  const field = document.getElementById('sync-code');
+  const code = (field ? field.value : (localStorage.getItem(SYNC_CODE_KEY) || '')).trim();
+  if (!base || code.length < 6) { if (!silent) toast('請先設定服務網址與同步碼（≥6 字）'); return; }
+  if (field) localStorage.setItem(SYNC_CODE_KEY, code);
+  let orig;
+  if (btn) { orig = btn.textContent; btn.disabled = true; btn.textContent = '☁️ 同步中…'; }
   try {
-    const res = await fetch(base + '/sync/load', {
+    const res = await fetch(base + '/sync/merge', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code }),
+      body: JSON.stringify({ code, doc: buildCloudDoc() }),
     });
     const d = await res.json();
-    if (!res.ok || d.error || !d.data || !Array.isArray(d.data.children)) return;
-    const cloudT = d.data.updatedAt || 0;
-    const localT = state.updatedAt || 0;
-    if (cloudT > localT) {                                          // 雲端較新才套用
-      applyCloudState(d.data);
-      render();
-      toast('☁️ 已自動同步雲端最新資料');
-    }
-  } catch (e) { /* 離線或失敗就略過，用本機 */ }
+    if (!res.ok || d.error) throw new Error(d.error || ('HTTP ' + res.status));
+    applyMerged(d.doc);
+    render();
+    if (!silent) toast('☁️ 已同步（每個小孩各自合併）');
+  } catch (e) { if (!silent) toast('同步失敗：' + e.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = orig; } }
+}
+// 開啟 App / 回前景自動雙向同步
+function autoSyncPull() {
+  if (localStorage.getItem('pi_hai_autosync') === '0') return;
+  syncNow(true, null);
 }
 function delChild(id) {
   if (state.children.length <= 1) return;
   if (!confirm('確定要刪除這個小孩的所有資料嗎？')) return;
   state.children = state.children.filter(c=>c.id!==id);
   delete state.stars[id]; delete state.data[id];
+  if (!state._deleted) state._deleted = {};
+  state._deleted[id] = Date.now();          // 墓碑：讓刪除也能同步到其他裝置
   if (state.activeChild === id) state.activeChild = state.children[0].id;
   save(); render();
 }
@@ -950,12 +968,12 @@ function addCustomAction() {
     ages: ['4-6','7-9','10-12'], places: ['indoor','outdoor','small'],
     times: ['morning','afternoon','evening'], seconds: 30
   });
-  save(); renderEnergy();
+  bumpShared(); save(); renderEnergy();
 }
 function delCustomAction(id) {
   if (!confirm('刪除這個自訂動作？')) return;
   state.customActions = (state.customActions || []).filter(a => a.id !== id);
-  save(); renderEnergy();
+  bumpShared(); save(); renderEnergy();
 }
 
 /* ---- 天氣 banner ---- */
@@ -1342,12 +1360,12 @@ function addCustomChore() {
   if (!name) { alert('請輸入家事名稱'); return; }
   if (!Array.isArray(state.customChores)) state.customChores = [];
   state.customChores.push({ id: uid(), name, desc, age, stars, emoji: '🧹' });
-  save(); renderChores();
+  bumpShared(); save(); renderChores();
 }
 function delCustomChore(id) {
   if (!confirm('刪除這個自訂家事？')) return;
   state.customChores = (state.customChores || []).filter(c => c.id !== id);
-  save(); renderChores();
+  bumpShared(); save(); renderChores();
 }
 
 /* ===========================================================
@@ -1457,7 +1475,7 @@ function addReward() {
   const cost = parseInt(document.getElementById('rw-cost').value, 10);
   if (!name || !cost || cost < 1) { alert('請輸入獎勵名稱和需要的星星數'); return; }
   ensureRewards().push({ id: uid(), name, cost, emoji: '🎁' });
-  save(); renderRewards();
+  bumpShared(); save(); renderRewards();
 }
 function editReward(id) {
   const r = ensureRewards().find(x => x.id === id);
@@ -1482,14 +1500,14 @@ function saveReward(id) {
   const cost = parseInt(document.getElementById('er-cost').value, 10);
   if (!name || !cost || cost < 1) { alert('請輸入名稱和星星數'); return; }
   r.name = name; r.cost = cost;
-  save();
+  bumpShared(); save();
   document.querySelector('.modal-mask')?.remove();
   renderRewards();
 }
 function delReward(id) {
   if (!confirm('刪除這個獎勵？')) return;
   state.rewards = ensureRewards().filter(r => r.id !== id);
-  save(); renderRewards();
+  bumpShared(); save(); renderRewards();
 }
 
 /* ===========================================================

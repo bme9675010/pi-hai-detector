@@ -44,6 +44,36 @@ export default {
       }
     }
 
+    // ---- 依小孩逐筆合併（雙向、不互相覆蓋）----
+    if (path === '/sync/merge') {
+      if (!env.SYNC) return json({ error: 'KV 尚未綁定' }, 500, cors);
+      const code = String(body.code || '').trim();
+      if (code.length < 6) return json({ error: '同步碼至少 6 個字' }, 400, cors);
+      const key = 'm2:' + code;
+      const raw = await env.SYNC.get(key);
+      const stored = raw ? JSON.parse(raw)
+        : { children: {}, shared: { rewards: [], customChores: [], customActions: [], t: 0 }, deleted: {} };
+      if (!stored.children) stored.children = {};
+      if (!stored.shared) stored.shared = { rewards: [], customChores: [], customActions: [], t: 0 };
+      if (!stored.deleted) stored.deleted = {};
+      const inc = body.doc || {};
+      // 每個小孩：誰的時間戳新就用誰的
+      const inC = inc.children || {};
+      for (const cid in inC) {
+        if (!stored.children[cid] || (inC[cid].t || 0) >= (stored.children[cid].t || 0)) stored.children[cid] = inC[cid];
+      }
+      // 共用設定（獎勵/自訂內容）：較新者勝
+      if (inc.shared && (inc.shared.t || 0) > (stored.shared.t || 0)) stored.shared = inc.shared;
+      // 刪除墓碑：傳播刪除
+      const inD = inc.deleted || {};
+      for (const cid in inD) stored.deleted[cid] = Math.max(stored.deleted[cid] || 0, inD[cid]);
+      for (const cid in stored.deleted) {
+        if (stored.children[cid] && stored.deleted[cid] >= (stored.children[cid].t || 0)) delete stored.children[cid];
+      }
+      await env.SYNC.put(key, JSON.stringify(stored));
+      return json({ doc: stored }, 200, cors);
+    }
+
     const userPrompt = buildPrompt(body);
     if (!userPrompt) return json({ error: 'unknown type' }, 400, cors);
 
