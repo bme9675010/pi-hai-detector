@@ -244,6 +244,7 @@ function voiceInput(id) {
 /* ---------------- AI 生成（呼叫 Cloudflare Worker 代理） ---------------- */
 function aiEnabled() { return !!(state.aiProxyUrl || '').trim(); }   // 沒設定網址就不顯示 AI 按鈕
 async function aiGenerate(type, params, btn) {
+  if (blockedByLock()) return null;
   const url = (state.aiProxyUrl || '').trim();
   if (!url) { toast('請先到「管理」設定 AI 服務網址'); setTimeout(() => go('children'), 600); return null; }
   const orig = btn ? btn.textContent : '';
@@ -565,7 +566,7 @@ function lastNDates(n) {
 }
 
 /* 切換小孩 */
-function selectChild(id) { state.activeChild = id; save(); render(); }
+function selectChild(id) { state.activeChild = id; save(); lockAcquire(); render(); }
 
 /* ===========================================================
    小孩管理
@@ -605,6 +606,15 @@ function renderChildren() {
       <button class="btn block green" onclick="saveAiUrl()">儲存網址</button>
     </div>
 
+    <div class="section-title">這台裝置名稱</div>
+    <div class="card">
+      <small class="hint" style="display:block;margin-bottom:8px">取一個好認的名字（如「爸爸手機」），別台被鎖時會顯示是誰在用。</small>
+      <div class="row-between">
+        <input type="text" id="dev-name" value="${esc(localStorage.getItem('pi_hai_device')||'')}" placeholder="例如：哥哥的平板" maxlength="16" style="flex:1" />
+        <button class="btn green" onclick="saveDeviceName()">儲存</button>
+      </div>
+    </div>
+
     <div class="section-title">雲端同步（多裝置）</div>
     <div class="card">
       <small class="hint" style="display:block;margin-bottom:8px">
@@ -621,7 +631,13 @@ function renderChildren() {
         <strong style="font-size:.9rem">${localStorage.getItem('pi_hai_autosync')==='0'?'⛅ 開啟 App 自動同步：關':'☁️ 開啟 App 自動同步：開'}</strong>
         <button class="btn ghost sm" onclick="toggleAutoSync()">切換</button>
       </div>
-      <small class="hint" style="display:block;margin-top:6px">開啟後，每次打開 App 會自動雙向同步（小孩各自的進度合併，不互相覆蓋）。同一個小孩在兩台同時改，才會以較晚的為準。</small>
+      <small class="hint" style="display:block;margin-top:6px">開啟後，每次打開 App 會自動雙向同步（小孩各自的進度合併，不互相覆蓋）。</small>
+      <div class="gap8"></div>
+      <div class="row-between">
+        <strong style="font-size:.9rem">${localStorage.getItem('pi_hai_lock')==='0'?'🔓 即時編輯鎖：關':'🔒 即時編輯鎖：開'}</strong>
+        <button class="btn ghost sm" onclick="toggleLock()">切換</button>
+      </div>
+      <small class="hint" style="display:block;margin-top:6px">開啟後，同一個小孩同時只有一台能編輯，其他台會是檢視模式，等對方切換小孩或關閉才解鎖。</small>
     </div>
 
     <div class="section-title">管理頁密碼鎖</div>
@@ -771,6 +787,18 @@ function toggleAutoSync() {
   toast(off ? '已開啟自動同步' : '已關閉自動同步');
   renderChildren();
 }
+function saveDeviceName() {
+  localStorage.setItem('pi_hai_device', (document.getElementById('dev-name').value || '').trim());
+  if (lockWs && lockWs.readyState === 1) lockWs.send(JSON.stringify({ type: 'hello', name: deviceName() }));
+  toast('裝置名稱已儲存');
+}
+function toggleLock() {
+  const off = localStorage.getItem('pi_hai_lock') === '0';
+  localStorage.setItem('pi_hai_lock', off ? '1' : '0');   // 切換
+  if (off) { lockConnect(); toast('已開啟即時編輯鎖'); }
+  else { lockRelease(); if (lockWs) try { lockWs.close(); } catch (e) {} lockWs = null; lockMap = {}; prevLockedOut = false; toast('已關閉即時編輯鎖'); }
+  renderChildren();
+}
 // 把本機資料打包成「雲端文件」格式（每個小孩各帶時間戳）
 function buildCloudDoc() {
   const doc = {
@@ -847,6 +875,61 @@ async function syncNow(silent, btn) {
 function autoSyncPull() {
   if (localStorage.getItem('pi_hai_autosync') === '0') return;
   syncNow(true, null);
+}
+
+/* ---------------- 即時編輯鎖（WebSocket → Worker Durable Object） ---------------- */
+let lockWs = null, lockSid = null, lockMap = {}, lockReconnect = null, prevLockedOut = false;
+function deviceName() { return (localStorage.getItem('pi_hai_device') || '').trim() || '某台裝置'; }
+function lockEnabled() {
+  return localStorage.getItem('pi_hai_lock') !== '0'
+    && !!syncBase() && (localStorage.getItem(SYNC_CODE_KEY) || '').trim().length >= 6;
+}
+function lockedOut() {                       // 目前這個小孩被「別台」鎖住？
+  const h = lockMap[state.activeChild];
+  return !!(h && h.sid && h.sid !== lockSid);
+}
+function lockHolderName() { const h = lockMap[state.activeChild]; return h ? h.by : ''; }
+function blockedByLock() {                   // 任務操作前呼叫，被鎖就擋下並提示
+  if (lockedOut()) { toast('⏳ ' + (lockHolderName() || '其他裝置') + ' 正在使用，請等對方結束'); return true; }
+  return false;
+}
+function lockConnect() {
+  if (!lockEnabled()) return;
+  if (lockWs && (lockWs.readyState === 0 || lockWs.readyState === 1)) { lockAcquire(); return; }
+  const base = syncBase().replace(/^http/, 'ws');
+  const code = (localStorage.getItem(SYNC_CODE_KEY) || '').trim();
+  try { lockWs = new WebSocket(base + '/room?code=' + encodeURIComponent(code)); }
+  catch (e) { return; }
+  lockWs.onopen = () => { lockWs.send(JSON.stringify({ type: 'hello', name: deviceName() })); lockAcquire(); };
+  lockWs.onmessage = (ev) => {
+    let m; try { m = JSON.parse(ev.data); } catch { return; }
+    if (m.type === 'welcome') { lockSid = m.sid; lockAcquire(); }
+    else if (m.type === 'locks') { lockMap = m.locks || {}; evalLock(); }
+  };
+  lockWs.onclose = () => { lockWs = null; if (lockEnabled()) { clearTimeout(lockReconnect); lockReconnect = setTimeout(lockConnect, 4000); } };
+  lockWs.onerror = () => { try { lockWs.close(); } catch (e) {} };
+}
+function lockAcquire() {
+  if (lockWs && lockWs.readyState === 1) lockWs.send(JSON.stringify({ type: 'acquire', childId: state.activeChild, name: deviceName() }));
+}
+function lockRelease() {
+  if (lockWs && lockWs.readyState === 1) lockWs.send(JSON.stringify({ type: 'release' }));
+}
+function evalLock() {
+  if (!lockMap[state.activeChild]) lockAcquire();   // 沒人持有就自己搶
+  const now = lockedOut();
+  renderLockBar();
+  if (now !== prevLockedOut) { prevLockedOut = now; render(); }   // 唯讀↔可編輯切換時重繪
+}
+function renderLockBar() {
+  const bar = document.getElementById('lockbar');
+  if (!bar) return;
+  if (lockedOut()) {
+    bar.style.display = 'block';
+    bar.textContent = '⏳ ' + (lockHolderName() || '其他裝置') + ' 正在使用「' + (child() ? child().name : '') + '」，你目前是檢視模式';
+  } else {
+    bar.style.display = 'none';
+  }
 }
 function delChild(id) {
   if (state.children.length <= 1) return;
@@ -1056,16 +1139,19 @@ function generateActions() {
   return chosen.slice(0, Math.max(3, Math.min(5, chosen.length)));
 }
 function regenEnergy() {
+  if (blockedByLock()) return;
   const cd = cdata();
   cd.energyToday = { date: todayStr(), actions: generateActions(), rewarded:false };
   save(); renderEnergy();
 }
 function toggleEnergy(i) {
+  if (blockedByLock()) return;
   const cd = cdata();
   cd.energyToday.actions[i].done = !cd.energyToday.actions[i].done;
   save(); renderEnergy();
 }
 function finishEnergy(ev) {
+  if (blockedByLock()) return;
   const cd = cdata();
   cd.energyToday.actions.forEach(a => a.done = true);
   cd.energyToday.rewarded = true;
@@ -1137,6 +1223,7 @@ function renderLevels() {
   `;
 }
 function addLevel() {
+  if (blockedByLock()) return;
   const name = (document.getElementById('lv-name').value || '').trim();
   const goal = (document.getElementById('lv-goal').value || '').trim() || '完成挑戰';
   const type = document.getElementById('lv-type').value;
@@ -1146,12 +1233,14 @@ function addLevel() {
   save(); renderLevels();
 }
 function delLevel(id) {
+  if (blockedByLock()) return;
   if (!confirm('刪除這個關卡？')) return;
   const cd = cdata();
   cd.levels = cd.levels.filter(l => l.id !== id);
   save(); renderLevels();
 }
 function completeLevel(id, ev) {
+  if (blockedByLock()) return;
   const cd = cdata();
   const l = cd.levels.find(x=>x.id===id);
   l.done = true;
@@ -1160,11 +1249,13 @@ function completeLevel(id, ev) {
   if (!got) toast('這關今天已經領過星星囉 ⭐');
 }
 function toggleLevel(id) {
+  if (blockedByLock()) return;
   const cd = cdata();
   const l = cd.levels.find(x=>x.id===id);
   l.done = false; save(); renderLevels();
 }
 function resetLevels() {
+  if (blockedByLock()) return;
   if (!confirm('重新開始所有關卡？星星不會扣除。')) return;
   cdata().levels.forEach(l=>l.done=false); save(); renderLevels();
 }
@@ -1228,6 +1319,7 @@ function renderFlows() {
 }
 // 上移/下移流程步驟（手機觸控可用）
 function moveFlowStep(i, dir) {
+  if (blockedByLock()) return;
   const f = cdata().flows[activeFlow];
   const j = i + dir;
   if (j < 0 || j >= f.steps.length) return;
@@ -1235,15 +1327,18 @@ function moveFlowStep(i, dir) {
   save(); renderFlows();
 }
 function toggleFlow(sid) {
+  if (blockedByLock()) return;
   const f = cdata().flows[activeFlow];
   f.checked[sid] = !f.checked[sid]; save(); renderFlows();
 }
 function addFlowStep() {
+  if (blockedByLock()) return;
   const inp = document.getElementById('newstep');
   const t = (inp.value||'').trim(); if (!t) return;
   cdata().flows[activeFlow].steps.push({ id:uid(), text:t }); save(); renderFlows();
 }
 function delFlowStep(sid) {
+  if (blockedByLock()) return;
   const f = cdata().flows[activeFlow];
   f.steps = f.steps.filter(s=>s.id!==sid); delete f.checked[sid]; save(); renderFlows();
 }
@@ -1257,6 +1352,7 @@ function flowDrop(e, i) {
   f.steps.splice(i,0,moved); flowDragIdx=null; save(); renderFlows();
 }
 function finishFlow(ev) {
+  if (blockedByLock()) return;
   const f = cdata().flows[activeFlow];
   const got = awardOnce('flow:'+activeFlow, 2, ev, `${f.title}完成，好棒的好習慣！`);
   if (got) f._rewarded = todayStr();
@@ -1331,6 +1427,7 @@ function renderChores() {
   `;
 }
 function drawChores() {
+  if (blockedByLock()) return;
   spinning = true; renderChores();
   setTimeout(() => {
     const pool = choresForChild();
@@ -1341,6 +1438,7 @@ function drawChores() {
   }, 700);
 }
 function toggleChore(id, ev) {
+  if (blockedByLock()) return;
   const cd = cdata();
   const ch = choreById(id);
   if (cd.chores.doneIds.includes(id)) {
@@ -1455,6 +1553,7 @@ function renderRewards() {
   `;
 }
 function redeemReward(id, ev) {
+  if (blockedByLock()) return;
   const r = ensureRewards().find(x => x.id === id);
   if (!r) return;
   const stars = state.stars[state.activeChild] || 0;
@@ -1634,6 +1733,7 @@ function ensureToday() {
   return cd.status[t];
 }
 function setStatus(key, val) {
+  if (blockedByLock()) return;
   const s = ensureToday();
   s[key] = (s[key]===val) ? undefined : val;
   save(); renderStatus();
@@ -1677,6 +1777,7 @@ function render() {
     history: renderHistory,
   }[r] || renderHome)();
   renderTabbar();
+  renderLockBar();
   // 頁面淡入動畫（重新觸發）
   $app.classList.remove('page-in'); void $app.offsetWidth; $app.classList.add('page-in');
 }
@@ -1684,12 +1785,15 @@ function render() {
 applyTheme();
 render();
 autoSyncPull();   // 開啟 App 自動拉雲端最新
+lockConnect();    // 連上即時編輯鎖
 
 // PWA 從背景回到前景時也檢查一次（至少間隔 20 秒，避免頻繁）
 let lastAutoPull = Date.now();
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && Date.now() - lastAutoPull > 20000) {
-    lastAutoPull = Date.now();
-    autoSyncPull();
+  if (document.visibilityState === 'visible') {
+    if (Date.now() - lastAutoPull > 20000) { lastAutoPull = Date.now(); autoSyncPull(); }
+    lockConnect();              // 回前景：重連 + 重新取得鎖
+  } else {
+    lockRelease();              // 進背景：放掉鎖讓別台可用
   }
 });

@@ -16,14 +16,26 @@ export default {
       'Access-Control-Allow-Headers': 'Content-Type',
     };
     if (request.method === 'OPTIONS') return new Response(null, { headers: cors });
-    if (request.method !== 'POST') return json({ error: 'POST only' }, 405, cors);
 
-    // 防濫用：只接受來自本 App 網域的請求（擋掉別的網站與大部分亂打）
     const allowed = env.ALLOWED_ORIGIN || '';
     const origin = request.headers.get('Origin');
-    if (allowed && allowed !== '*' && origin !== allowed) {
-      return json({ error: 'forbidden origin' }, 403, cors);
+    const originOk = !(allowed && allowed !== '*' && origin !== allowed);
+
+    // ---- 即時編輯鎖：WebSocket → Durable Object（一個同步碼一間房）----
+    const url = new URL(request.url);
+    if (url.pathname === '/room') {
+      if (request.headers.get('Upgrade') !== 'websocket') return new Response('expected websocket', { status: 426 });
+      if (!originOk) return new Response('forbidden', { status: 403 });
+      if (!env.ROOM) return new Response('DO 未綁定', { status: 500 });
+      const code = url.searchParams.get('code') || '';
+      if (code.length < 6) return new Response('bad code', { status: 400 });
+      const stub = env.ROOM.get(env.ROOM.idFromName(code));
+      return stub.fetch(request);
     }
+
+    if (request.method !== 'POST') return json({ error: 'POST only' }, 405, cors);
+    // 防濫用：只接受來自本 App 網域的請求（擋掉別的網站與大部分亂打）
+    if (!originOk) return json({ error: 'forbidden origin' }, 403, cors);
 
     let body;
     try { body = await request.json(); } catch { return json({ error: 'bad json' }, 400, cors); }
@@ -168,4 +180,54 @@ function parseItems(text) {
   const arr = JSON.parse(t);
   if (!Array.isArray(arr) || !arr.length) throw new Error('not array');
   return arr;
+}
+
+/* ===========================================================
+   即時編輯鎖 Durable Object（一個同步碼 = 一間房）
+   以小孩為單位上鎖：同一個小孩同時只有一台能編輯，其餘唯讀。
+   鎖只存在記憶體，斷線/關閉自動釋放。
+   =========================================================== */
+export class FamilyRoom {
+  constructor(state, env) {
+    this.sessions = new Map(); // ws -> {id, childId, name}
+    this.locks = new Map();    // childId -> sessionId
+  }
+  async fetch(request) {
+    const pair = new WebSocketPair();
+    const server = pair[1];
+    server.accept();
+    const session = { id: crypto.randomUUID(), childId: null, name: '某台裝置' };
+    this.sessions.set(server, session);
+    server.send(JSON.stringify({ type: 'welcome', sid: session.id }));
+    this.sendLocks(server);
+
+    server.addEventListener('message', (ev) => {
+      let m; try { m = JSON.parse(ev.data); } catch { return; }
+      if (m.type === 'hello') {
+        if (m.name) session.name = String(m.name).slice(0, 16);
+        this.sendLocks(server);
+      } else if (m.type === 'acquire' && m.childId) {
+        if (m.name) session.name = String(m.name).slice(0, 16);
+        const holder = this.locks.get(m.childId);
+        this.releaseBy(session.id);                 // 一台只持有一個小孩
+        if (!holder || holder === session.id) {
+          this.locks.set(m.childId, session.id);
+          session.childId = m.childId;
+        }
+        this.broadcast();
+      } else if (m.type === 'release') {
+        this.releaseBy(session.id); session.childId = null;
+        this.broadcast();
+      }
+    });
+    const close = () => { this.sessions.delete(server); this.releaseBy(session.id); this.broadcast(); };
+    server.addEventListener('close', close);
+    server.addEventListener('error', close);
+    return new Response(null, { status: 101, webSocket: pair[0] });
+  }
+  nameOf(sid) { for (const s of this.sessions.values()) if (s.id === sid) return s.name; return '其他裝置'; }
+  releaseBy(sid) { for (const [cid, h] of this.locks) if (h === sid) this.locks.delete(cid); }
+  lockMap() { const o = {}; for (const [cid, sid] of this.locks) o[cid] = { by: this.nameOf(sid), sid }; return o; }
+  sendLocks(ws) { try { ws.send(JSON.stringify({ type: 'locks', locks: this.lockMap() })); } catch (e) {} }
+  broadcast() { const msg = JSON.stringify({ type: 'locks', locks: this.lockMap() }); for (const ws of this.sessions.keys()) { try { ws.send(msg); } catch (e) {} } }
 }
