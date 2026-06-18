@@ -78,7 +78,8 @@ function ensureChoreLib() {
     const defs = D.DEFAULT_CHORES.map((c, i) => ({ id: 'd' + i, ...c }));
     state.customChores = [...defs, ...state.customChores];
     state.choreSeeded = true;
-    bumpShared(); save();
+    // 種子化不是使用者編輯：直接存檔，不更新共用時間戳，避免新裝置同步時蓋掉別台已自訂的題庫
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {}
   }
   return state.customChores;
 }
