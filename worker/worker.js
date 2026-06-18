@@ -112,35 +112,50 @@ export default {
 
     // ---- 天氣：優先中央氣象署 CWA（台灣準），失敗退回 Open-Meteo ----
     if (path === '/weather') {
+      const debug = url.searchParams.get('debug') === '1';
       const city = normCity(body.city || '');
       const district = String(body.district || '').trim();
       const id = CWA_MAP[city];
-      if (id && env.CWA_KEY && district) {
+      let cwaSkip = '';
+      if (!id) cwaSkip = 'no-dataset-for-city:' + city;
+      else if (!env.CWA_KEY) cwaSkip = 'no-CWA_KEY';
+      else if (!district) cwaSkip = 'no-district';
+      else {
         try {
           const u = `https://opendata.cwa.gov.tw/api/v1/rest/datastore/${id}`
             + `?Authorization=${env.CWA_KEY}&LocationName=${encodeURIComponent(district)}`
             + `&ElementName=${encodeURIComponent('天氣現象,溫度')}`;
-          const r = await fetch(u);
-          if (r.ok) {
-            const d = await r.json();
-            const loc = d.records && d.records.Locations && d.records.Locations[0]
-              && d.records.Locations[0].Location && d.records.Locations[0].Location[0];
-            if (loc) {
-              const wx = pickNow(loc, '天氣現象');
-              const tp = pickNow(loc, '溫度');
-              if (wx && wx.Weather) {
-                return json({ source: 'cwa', weather: wx.Weather, code: wx.WeatherCode,
-                  temp: tp ? Number(tp.Temperature) : null }, 200, cors);
+          const r = await fetch(u, { headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+            'Accept': 'application/json',
+          }});
+          if (!r.ok) { cwaSkip = 'http-' + r.status; }
+          else {
+            const text = await r.text();
+            if (text[0] !== '{') { cwaSkip = 'blocked:' + text.slice(0, 40); }
+            else {
+              const d = JSON.parse(text);
+              const loc = d.records && d.records.Locations && d.records.Locations[0]
+                && d.records.Locations[0].Location && d.records.Locations[0].Location[0];
+              if (!loc) { cwaSkip = 'no-location-match:' + district; }
+              else {
+                const wx = pickNow(loc, '天氣現象');
+                const tp = pickNow(loc, '溫度');
+                if (wx && wx.Weather) {
+                  return json({ source: 'cwa', weather: wx.Weather, code: wx.WeatherCode,
+                    temp: tp ? Number(tp.Temperature) : null }, 200, cors);
+                }
+                cwaSkip = 'no-weather-element';
               }
             }
           }
-        } catch (e) { /* 落到 Open-Meteo */ }
+        } catch (e) { cwaSkip = 'err:' + e.message; }
       }
       try {
         const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${body.lat}&longitude=${body.lon}&current=temperature_2m,weather_code&timezone=auto`);
         const j = await r.json();
-        return json({ source: 'open-meteo', code: j.current.weather_code, temp: j.current.temperature_2m }, 200, cors);
-      } catch (e) { return json({ error: 'weather failed' }, 502, cors); }
+        return json({ source: 'open-meteo', code: j.current.weather_code, temp: j.current.temperature_2m, ...(debug ? { cwaSkip } : {}) }, 200, cors);
+      } catch (e) { return json({ error: 'weather failed', cwaSkip }, 502, cors); }
     }
 
     const userPrompt = buildPrompt(body);
