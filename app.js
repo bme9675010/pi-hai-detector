@@ -1405,10 +1405,10 @@ function renderChores() {
       </div>`;
     }).join('');
   } else {
-    stage = `<div class="empty"><div class="e">🎡</div>按下面的按鈕<br>抽出今天的小任務！</div>`;
+    stage = `<div class="empty"><div class="e">🎡</div>還沒抽今天的家事<br>按下面「抽今日小任務」開始！</div>`;
   }
 
-  // 家長自訂家事清單
+  // 家事題庫：家長自訂的部分（內建的不列出，只顯示數量）
   const custom = (state.customChores || []).map(c =>
     `<div class="card task-item">
       <span class="n" style="background:var(--bg)">${c.emoji || '🧹'}</span>
@@ -1416,9 +1416,12 @@ function renderChores() {
         <div class="d">${esc(c.desc)} · 適合 ${c.age} 歲 · ⭐${c.stars}</div></div>
       <button class="btn ghost sm" onclick="delCustomChore('${c.id}')">🗑️</button>
     </div>`).join('');
+  const builtinCount = D.DEFAULT_CHORES.length;
 
   $app.innerHTML = `
     ${topbar('家事任務輪盤')}
+    <div class="section-title">🎯 今天要做的家事</div>
+    <small class="hint" style="display:block;margin:-4px 4px 8px">抽出來的才是今天的任務，打勾 ✓ 就能領星星</small>
     ${stage}
     <button class="btn block purple" ${spinning?'disabled':''} onclick="drawChores()">
       ${has?'🔄 重新抽今日小任務':'🎲 抽今日小任務'}
@@ -1426,8 +1429,12 @@ function renderChores() {
     <div class="gap8"></div>
     <small class="hint center" style="display:block">依 ${esc(child().name)}（${child().age} 歲）抽 1～3 個適齡任務</small>
 
-    ${aiEnabled() ? `<button class="btn block purple" onclick="aiChore(this)">🎲 AI 加新家事到清單</button>` : ''}
-    <div class="section-title">自己加家事</div>
+    <div class="section-title">📋 家事題庫</div>
+    <small class="hint" style="display:block;margin:-4px 4px 8px">
+      這裡是「所有可能被抽到」的家事（內建 ${builtinCount} 個 + 你新增的）。<br>
+      在這裡只能新增/刪除，<b>不是今天的任務</b>；要做家事請用上面的「抽今日小任務」。
+    </small>
+    ${aiEnabled() ? `<button class="btn block purple" onclick="aiChore(this)">🎲 AI 加新家事到題庫</button>` : ''}
     ${custom}
     <div class="card">
       <div class="voice-field"><input type="text" id="cc-name" placeholder="家事名稱，例如：幫忙摺被子" maxlength="14" />${micBtn('cc-name')}</div>
