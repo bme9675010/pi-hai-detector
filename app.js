@@ -889,7 +889,7 @@ function autoSyncPull() {
 }
 
 /* ---------------- 即時編輯鎖（WebSocket → Worker Durable Object） ---------------- */
-let lockWs = null, lockSid = null, lockMap = {}, lockReconnect = null, prevLockedOut = false;
+let lockWs = null, lockSid = null, lockMap = {}, lockReconnect = null, lockPing = null, prevLockedOut = false;
 function deviceName() { return (localStorage.getItem('pi_hai_device') || '').trim() || '某台裝置'; }
 function lockEnabled() {
   return localStorage.getItem('pi_hai_lock') !== '0'
@@ -911,14 +911,24 @@ function lockConnect() {
   const code = (localStorage.getItem(SYNC_CODE_KEY) || '').trim();
   try { lockWs = new WebSocket(base + '/room?code=' + encodeURIComponent(code)); }
   catch (e) { return; }
-  lockWs.onopen = () => { lockWs.send(JSON.stringify({ type: 'hello', name: deviceName() })); lockAcquire(); };
+  lockWs.onopen = () => {
+    lockWs.send(JSON.stringify({ type: 'hello', name: deviceName() })); lockAcquire();
+    clearInterval(lockPing);
+    lockPing = setInterval(() => { if (lockWs && lockWs.readyState === 1) lockWs.send(JSON.stringify({ type: 'ping' })); }, 15000);
+  };
   lockWs.onmessage = (ev) => {
     let m; try { m = JSON.parse(ev.data); } catch { return; }
     if (m.type === 'welcome') { lockSid = m.sid; lockAcquire(); }
     else if (m.type === 'locks') { lockMap = m.locks || {}; evalLock(); }
   };
-  lockWs.onclose = () => { lockWs = null; if (lockEnabled()) { clearTimeout(lockReconnect); lockReconnect = setTimeout(lockConnect, 4000); } };
+  lockWs.onclose = () => { lockWs = null; clearInterval(lockPing); if (lockEnabled()) { clearTimeout(lockReconnect); lockReconnect = setTimeout(lockConnect, 4000); } };
   lockWs.onerror = () => { try { lockWs.close(); } catch (e) {} };
+}
+// 強制奪回控制權（橫幅按鈕：確定沒別人在用時用）
+function stealLock() {
+  if (!confirm('確定改由這台操作嗎？\n若真的有其他人正在編輯，可能會覆蓋到對方的修改。')) return;
+  if (lockWs && lockWs.readyState === 1) lockWs.send(JSON.stringify({ type: 'steal', childId: state.activeChild, name: deviceName() }));
+  else { lockConnect(); }
 }
 function lockAcquire() {
   if (lockWs && lockWs.readyState === 1) lockWs.send(JSON.stringify({ type: 'acquire', childId: state.activeChild, name: deviceName() }));
@@ -937,7 +947,8 @@ function renderLockBar() {
   if (!bar) return;
   if (lockedOut()) {
     bar.style.display = 'block';
-    bar.textContent = '⏳ ' + (lockHolderName() || '其他裝置') + ' 正在使用「' + (child() ? child().name : '') + '」，你目前是檢視模式';
+    bar.innerHTML = '⏳ ' + esc(lockHolderName() || '其他裝置') + ' 正在使用「' + esc(child() ? child().name : '') + '」，你是檢視模式'
+      + ' <button onclick="stealLock()" style="margin-left:6px;border:none;border-radius:999px;padding:3px 10px;font-weight:800;background:#7a5b00;color:#FFE3A0;cursor:pointer">改由我操作</button>';
   } else {
     bar.style.display = 'none';
   }

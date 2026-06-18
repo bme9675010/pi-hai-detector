@@ -259,34 +259,35 @@ function parseItems(text) {
    以小孩為單位上鎖：同一個小孩同時只有一台能編輯，其餘唯讀。
    鎖只存在記憶體，斷線/關閉自動釋放。
    =========================================================== */
+const STALE_MS = 30000;   // 超過 30 秒沒心跳 → 視為離線，鎖自動釋放
 export class FamilyRoom {
   constructor(state, env) {
-    this.sessions = new Map(); // ws -> {id, childId, name}
+    this.sessions = new Map(); // ws -> {id, childId, name, seen}
     this.locks = new Map();    // childId -> sessionId
   }
   async fetch(request) {
     const pair = new WebSocketPair();
     const server = pair[1];
     server.accept();
-    const session = { id: crypto.randomUUID(), childId: null, name: '某台裝置' };
+    const session = { id: crypto.randomUUID(), childId: null, name: '某台裝置', seen: Date.now() };
     this.sessions.set(server, session);
     server.send(JSON.stringify({ type: 'welcome', sid: session.id }));
-    this.sendLocks(server);
+    this.sweep(); this.sendLocks(server);
 
     server.addEventListener('message', (ev) => {
       let m; try { m = JSON.parse(ev.data); } catch { return; }
+      session.seen = Date.now();
       if (m.type === 'hello') {
         if (m.name) session.name = String(m.name).slice(0, 16);
-        this.sendLocks(server);
+        this.sweep(); this.broadcast();
+      } else if (m.type === 'ping') {
+        if (this.sweep()) this.broadcast();          // 順便清掉過期幽靈鎖
       } else if (m.type === 'acquire' && m.childId) {
         if (m.name) session.name = String(m.name).slice(0, 16);
-        const holder = this.locks.get(m.childId);
-        this.releaseBy(session.id);                 // 一台只持有一個小孩
-        if (!holder || holder === session.id) {
-          this.locks.set(m.childId, session.id);
-          session.childId = m.childId;
-        }
-        this.broadcast();
+        this.acquire(session, m.childId, false);
+      } else if (m.type === 'steal' && m.childId) {  // 強制奪回（使用者按「改由我操作」）
+        if (m.name) session.name = String(m.name).slice(0, 16);
+        this.acquire(session, m.childId, true);
       } else if (m.type === 'release') {
         this.releaseBy(session.id); session.childId = null;
         this.broadcast();
@@ -297,9 +298,28 @@ export class FamilyRoom {
     server.addEventListener('error', close);
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
+  acquire(session, cid, force) {
+    this.sweep();
+    const holder = this.locks.get(cid);
+    this.releaseBy(session.id);                 // 一台只持有一個小孩
+    if (force || !holder || holder === session.id || this.isStale(holder)) {
+      this.locks.set(cid, session.id);
+      session.childId = cid;
+    }
+    this.broadcast();
+  }
+  isStale(sid) {
+    for (const s of this.sessions.values()) if (s.id === sid) return (Date.now() - s.seen) > STALE_MS;
+    return true;   // 連線已不在
+  }
+  sweep() {
+    let changed = false;
+    for (const [cid, sid] of this.locks) if (this.isStale(sid)) { this.locks.delete(cid); changed = true; }
+    return changed;
+  }
   nameOf(sid) { for (const s of this.sessions.values()) if (s.id === sid) return s.name; return '其他裝置'; }
   releaseBy(sid) { for (const [cid, h] of this.locks) if (h === sid) this.locks.delete(cid); }
-  lockMap() { const o = {}; for (const [cid, sid] of this.locks) o[cid] = { by: this.nameOf(sid), sid }; return o; }
+  lockMap() { this.sweep(); const o = {}; for (const [cid, sid] of this.locks) o[cid] = { by: this.nameOf(sid), sid }; return o; }
   sendLocks(ws) { try { ws.send(JSON.stringify({ type: 'locks', locks: this.lockMap() })); } catch (e) {} }
   broadcast() { const msg = JSON.stringify({ type: 'locks', locks: this.lockMap() }); for (const ws of this.sessions.keys()) { try { ws.send(msg); } catch (e) {} } }
 }
