@@ -213,6 +213,13 @@ function isAwarded(key) {
   const cd = cdata();
   return cd.awarded.date === todayStr() && cd.awarded.keys.includes(key);
 }
+/* 星星紀錄（得到/花費），給管理頁紀錄分頁用 */
+function logStar(type, name, delta) {
+  const cd = cdata();
+  if (!Array.isArray(cd.starLog)) cd.starLog = [];
+  cd.starLog.push({ ts: Date.now(), date: todayStr(), type, name: String(name || '').slice(0, 24), delta });
+  if (cd.starLog.length > 80) cd.starLog = cd.starLog.slice(-80);   // 只留最近 80 筆
+}
 /* 同一天同一任務只給一次星星，回傳是否真的給了 */
 function awardOnce(key, n, ev, msg) {
   const cd = cdata(); const t = todayStr();
@@ -221,6 +228,7 @@ function awardOnce(key, n, ev, msg) {
   cd.awarded.keys.push(key);
   markActiveToday();
   addStars(n, ev);
+  logStar('earn', (msg || '').replace(/[！!。]/g, ''), n);
   if (msg) rewardModal(n, msg);
   save();
   return true;
@@ -341,8 +349,21 @@ async function aiChore(btn) {
     stars: Math.min(3, Math.max(1, parseInt(it.stars) || 1)),
     emoji: String(it.emoji || '🧹').slice(0, 2),
   }));
-  save(); renderChores();
+  bumpShared(); save(); renderChores();
   toast('🤖 AI 加了新家事！');
+}
+async function aiReward(btn) {
+  const items = await aiGenerate('reward', { age: child().age, count: 3 }, btn);
+  if (!items) return;
+  ensureRewards();
+  items.forEach(it => state.rewards.push({
+    id: uid(),
+    name: String(it.name || '獎勵').slice(0, 16),
+    cost: Math.min(50, Math.max(1, parseInt(it.cost) || 10)),
+    emoji: String(it.emoji || '🎁').slice(0, 2),
+  }));
+  bumpShared(); save(); renderRewards();
+  toast('🤖 AI 想了新獎勵！');
 }
 async function aiFlow(btn) {
   const items = await aiGenerate('flow', { age: child().age, flow: activeFlow, count: 4 }, btn);
@@ -618,6 +639,9 @@ function renderChildren() {
     ${topbar('管理小孩', false)}
     ${list}
     <button class="btn block accent" onclick="editChild(null)">＋ 新增小孩</button>
+
+    <div class="section-title">紀錄</div>
+    <button class="btn block ghost" onclick="go('records')">📜 查看 ${esc(child().name)} 的星星與完成紀錄</button>
 
     <div class="section-title">外觀</div>
     <div class="card row-between">
@@ -1367,9 +1391,18 @@ function completeLevel(id, ev) {
   const cd = cdata();
   const l = cd.levels.find(x=>x.id===id);
   l.done = true;
-  const got = awardOnce('level:'+id, 2, ev, `「${l.name}」破關，解鎖下一關！`);
+  if (!Array.isArray(cd.levelAwarded)) cd.levelAwarded = [];
+  let got = false;
+  if (!cd.levelAwarded.includes(id)) {          // 每關「一輩子」只給一次星（永久防刷）
+    cd.levelAwarded.push(id);
+    markActiveToday();
+    addStars(2, ev);
+    logStar('earn', `破關「${l.name}」`, 2);
+    rewardModal(2, `「${l.name}」破關，解鎖下一關！`);
+    got = true;
+  }
   save(); renderLevels();
-  if (!got) toast('這關今天已經領過星星囉 ⭐');
+  if (!got) toast('這關之前已經領過星星囉 ⭐');
 }
 function toggleLevel(id) {
   if (blockedByLock()) return;
@@ -1710,6 +1743,7 @@ function renderRewards() {
     <div class="card">${achievementsHTML()}</div>
     <div class="section-title">可兌換的獎勵</div>
     ${list}
+    ${aiEnabled() ? `<button class="btn block purple" onclick="aiReward(this)">🎲 不知道要設什麼？AI 幫你想獎勵</button>` : ''}
     <div class="section-title">自己加獎勵</div>
     <div class="card">
       <div class="voice-field"><input type="text" id="rw-name" placeholder="獎勵名稱，例如：看卡通 30 分鐘" maxlength="20" />${micBtn('rw-name')}</div>
@@ -1731,6 +1765,7 @@ function redeemReward(id, ev) {
   if (!confirm(`用 ${r.cost} 顆星星兌換「${r.name}」嗎？`)) return;
   state.stars[state.activeChild] = stars - r.cost;
   cdata().redeemLog.push({ name: r.name, cost: r.cost, date: todayStr() });
+  logStar('spend', '兌換「' + r.name + '」', -r.cost);
   save();
   if (ev) flyStars(ev, 3);
   celebrate();
@@ -1777,6 +1812,47 @@ function delReward(id) {
   if (!confirm('刪除這個獎勵？')) return;
   state.rewards = ensureRewards().filter(r => r.id !== id);
   bumpShared(); save(); renderRewards();
+}
+
+/* ===========================================================
+   紀錄分頁（管理頁進入）
+   =========================================================== */
+function renderRecords() {
+  const cd = cdata();
+  const stars = state.stars[state.activeChild] || 0;
+  const earned = (state.earned && state.earned[state.activeChild]) || 0;
+  const streak = computeStreak(cd);
+  const log = (cd.starLog || []).slice().reverse();
+  const logHtml = log.length ? log.map(e => `
+    <div style="padding:8px 2px;border-bottom:1px solid var(--line)">
+      <div class="row-between">
+        <span style="font-weight:700">${e.delta > 0 ? '⭐' : '🎁'} ${esc(e.name || '')}</span>
+        <span style="font-weight:900;color:${e.delta > 0 ? 'var(--green)' : 'var(--primary)'}">${e.delta > 0 ? '+' : ''}${e.delta}</span>
+      </div>
+      <div class="muted" style="font-size:.72rem">${e.date}</div>
+    </div>`).join('') : '<div class="empty"><div class="e">📜</div>還沒有紀錄，完成任務或兌換後會出現</div>';
+
+  const levelsDone = cd.levels.filter(l => l.done).length;
+  const statusDays = Object.keys(cd.status || {}).length;
+  const redeems = (cd.redeemLog || []).length;
+
+  $app.innerHTML = `
+    ${topbar(esc(child().name) + ' 的紀錄', false)}
+    <div class="card center" style="background:linear-gradient(135deg,#FFD93D,#FF9F45);color:#5a4500">
+      <div style="display:flex;justify-content:space-around;text-align:center">
+        <div><div style="font-size:1.5rem;font-weight:900">⭐${stars}</div><small>目前星星</small></div>
+        <div><div style="font-size:1.5rem;font-weight:900">${earned}</div><small>累積賺得</small></div>
+        <div><div style="font-size:1.5rem;font-weight:900">🔥${streak}</div><small>連續天數</small></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="row-between"><span>🏆 完成關卡</span><strong>${levelsDone} / ${cd.levels.length}</strong></div>
+      <div class="row-between" style="margin-top:6px"><span>📝 記錄狀態天數</span><strong>${statusDays} 天</strong></div>
+      <div class="row-between" style="margin-top:6px"><span>🎁 兌換次數</span><strong>${redeems} 次</strong></div>
+    </div>
+    <div class="section-title">星星明細（最近 ${log.length}）</div>
+    <div class="card">${logHtml}</div>
+  `;
 }
 
 /* ===========================================================
@@ -1945,6 +2021,7 @@ function render() {
     status: renderStatus,
     rewards: renderRewards,
     history: renderHistory,
+    records: renderRecords,
   }[r] || renderHome)();
   renderTabbar();
   renderLockBar();

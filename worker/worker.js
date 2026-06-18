@@ -198,6 +198,10 @@ function buildPrompt(b) {
       + `回傳 JSON 陣列，每個物件欄位：name(家事名,8字內)、desc(一句話說明)、`
       + `age(只能是 4-6 或 7-9 或 10-12)、stars(1到3的整數)、emoji(一個相關emoji)。`;
   }
+  if (b.type === 'reward') {
+    return `幫家長想 ${n} 個適合${age}小孩的「集點獎勵」（以活動/特權/小確幸為主，少用花錢買的物質獎勵，要正向健康）。`
+      + `回傳 JSON 陣列，每個物件欄位：name(獎勵名,12字內)、cost(建議所需星星數,5到30的整數)、emoji(一個相關emoji)。`;
+  }
   if (b.type === 'flow') {
     const which = b.flow === 'night' ? '睡前' : '晨間';
     return `幫${age}的小孩設計 ${n} 個${which}流程的步驟（要簡短好懂）。`
