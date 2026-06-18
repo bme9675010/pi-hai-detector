@@ -70,12 +70,19 @@ function ensureRewards() {
 
 /* ---------------- 自訂內容（家長可新增） ---------------- */
 const AGE_RANK = { '4-6':1, '7-9':2, '10-12':3 };
-// 家事：預設給穩定 id（d0,d1…），加上家長自訂的
-function allChores() {
-  const defs = D.DEFAULT_CHORES.map((c, i) => ({ id: 'd' + i, ...c }));
-  const custom = Array.isArray(state.customChores) ? state.customChores : [];
-  return [...defs, ...custom];
+// 家事題庫：第一次使用把內建併入 state.customChores，之後內建/自訂一視同仁、皆可編輯刪除
+function ensureChoreLib() {
+  if (!Array.isArray(state.customChores)) state.customChores = [];
+  const hasBuiltin = state.customChores.some(c => /^d\d+$/.test(c.id));
+  if (!hasBuiltin && !state.choreSeeded) {
+    const defs = D.DEFAULT_CHORES.map((c, i) => ({ id: 'd' + i, ...c }));
+    state.customChores = [...defs, ...state.customChores];
+    state.choreSeeded = true;
+    bumpShared(); save();
+  }
+  return state.customChores;
 }
+function allChores() { return ensureChoreLib(); }
 function choreById(id) { return allChores().find(c => c.id === id); }
 // 依目前小孩年齡篩選適合的家事（年齡層相等或更小的）
 function choresForChild() {
@@ -1414,15 +1421,16 @@ function renderChores() {
     stage = `<div class="empty"><div class="e">🎡</div>還沒抽今天的家事<br>按下面「抽今日小任務」開始！</div>`;
   }
 
-  // 家事題庫：家長自訂的部分（內建的不列出，只顯示數量）
-  const custom = (state.customChores || []).map(c =>
+  // 家事題庫：內建 + 自訂全部可編輯/刪除
+  const lib = allChores();
+  const libHtml = lib.map(c =>
     `<div class="card task-item">
       <span class="n" style="background:var(--bg)">${c.emoji || '🧹'}</span>
       <div class="body"><div class="t">${esc(c.name)}</div>
         <div class="d">${esc(c.desc)} · 適合 ${c.age} 歲 · ⭐${c.stars}</div></div>
+      <button class="btn ghost sm" onclick="editChore('${c.id}')">✏️</button>
       <button class="btn ghost sm" onclick="delCustomChore('${c.id}')">🗑️</button>
     </div>`).join('');
-  const builtinCount = D.DEFAULT_CHORES.length;
 
   $app.innerHTML = `
     ${topbar('家事任務輪盤')}
@@ -1435,17 +1443,14 @@ function renderChores() {
     <div class="gap8"></div>
     <small class="hint center" style="display:block">依 ${esc(child().name)}（${child().age} 歲）抽 1～3 個適齡任務</small>
 
-    <div class="section-title">📋 家事題庫</div>
+    <div class="section-title">📋 家事題庫（${lib.length}）</div>
     <small class="hint" style="display:block;margin:-4px 4px 8px">
-      這裡是「所有可能被抽到」的家事（內建 ${builtinCount} 個 + 你新增的）。<br>
-      在這裡只能新增/刪除，<b>不是今天的任務</b>；要做家事請用上面的「抽今日小任務」。
+      這裡是「所有可能被抽到」的家事，✏️ 改、🗑️ 刪都可以，<b>不是今天的任務</b>；<br>
+      要做家事請用上面的「抽今日小任務」。
     </small>
     ${aiEnabled() ? `<button class="btn block purple" onclick="aiChore(this)">🎲 AI 加新家事到題庫</button>` : ''}
-    ${custom}
-    <details class="lib">
-      <summary>📖 查看內建家事（${builtinCount} 個）</summary>
-      ${D.DEFAULT_CHORES.map(c => `<div class="lib-item"><b>${c.emoji||'🧹'} ${esc(c.name)}</b> · 適合 ${c.age} 歲 · ⭐${c.stars}<br><span class="muted">${esc(c.desc)}</span></div>`).join('')}
-    </details>
+    ${libHtml}
+    <div class="section-title">新增家事</div>
     <div class="card">
       <div class="voice-field"><input type="text" id="cc-name" placeholder="家事名稱，例如：幫忙摺被子" maxlength="14" />${micBtn('cc-name')}</div>
       <div class="gap8"></div>
@@ -1496,9 +1501,47 @@ function addCustomChore() {
   bumpShared(); save(); renderChores();
 }
 function delCustomChore(id) {
-  if (!confirm('刪除這個自訂家事？')) return;
+  if (!confirm('刪除這個家事？')) return;
   state.customChores = (state.customChores || []).filter(c => c.id !== id);
   bumpShared(); save(); renderChores();
+}
+function editChore(id) {
+  const c = allChores().find(x => x.id === id);
+  if (!c) return;
+  modal(`
+    <h2>編輯家事</h2>
+    <div style="text-align:left">
+      <div class="field-label">名稱</div>
+      <input type="text" id="ec-name" value="${esc(c.name)}" maxlength="14" />
+      <div class="field-label">說明</div>
+      <input type="text" id="ec-desc" value="${esc(c.desc)}" maxlength="24" />
+      <div class="field-label">適合年齡</div>
+      <select id="ec-age" class="choice" style="width:100%">
+        <option value="4-6" ${c.age==='4-6'?'selected':''}>4-6 歲</option>
+        <option value="7-9" ${c.age==='7-9'?'selected':''}>7-9 歲</option>
+        <option value="10-12" ${c.age==='10-12'?'selected':''}>10-12 歲</option>
+      </select>
+      <div class="field-label">星星數</div>
+      <input type="number" id="ec-stars" value="${c.stars}" min="1" max="5" />
+    </div>
+    <div class="gap8"></div>
+    <button class="btn block green" onclick="saveChore('${id}')">儲存</button>
+    <div class="gap8"></div>
+    <button class="btn block ghost" onclick="this.closest('.modal-mask').remove()">取消</button>
+  `);
+}
+function saveChore(id) {
+  const c = allChores().find(x => x.id === id);
+  if (!c) return;
+  const name = (document.getElementById('ec-name').value || '').trim();
+  if (!name) { alert('請輸入名稱'); return; }
+  c.name = name;
+  c.desc = (document.getElementById('ec-desc').value || '').trim() || '幫忙做家事';
+  c.age = document.getElementById('ec-age').value;
+  c.stars = Math.min(5, Math.max(1, parseInt(document.getElementById('ec-stars').value, 10) || 1));
+  bumpShared(); save();
+  document.querySelector('.modal-mask')?.remove();
+  renderChores();
 }
 
 /* ===========================================================
