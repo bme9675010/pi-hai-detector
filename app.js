@@ -272,7 +272,7 @@ const VALID_LVTYPE = { balance:1, jump:1, coordination:1, core:1, flexibility:1 
 
 async function aiEnergy(btn) {
   const items = await aiGenerate('energy', { age: child().age, place: energyFilter.place, time: energyFilter.time, count: 5 }, btn);
-  if (!items) return;
+  if (!items) return false;
   const actions = items.map(it => ({
     name: String(it.name || '動作').slice(0, 10),
     desc: String(it.desc || ''),
@@ -284,6 +284,17 @@ async function aiEnergy(btn) {
   cdata().energyToday = { date: todayStr(), actions, rewarded: false };
   save(); renderEnergy();
   toast('🤖 AI 出了新動作！');
+  return true;
+}
+// 合併按鈕：有 AI 用 AI（失敗退回內建），沒 AI 用內建洗牌
+async function newEnergy(btn) {
+  if (blockedByLock()) return;
+  if (aiEnabled()) {
+    const ok = await aiEnergy(btn);
+    if (ok === false) regenEnergy();   // AI 失敗就退回內建，確保有動作
+  } else {
+    regenEnergy();
+  }
 }
 async function aiLevel(btn) {
   const items = await aiGenerate('level', { age: child().age, count: 3 }, btn);
@@ -990,14 +1001,10 @@ function renderEnergy() {
         ${isAwarded('energy')?'今日已完成 ✓':'完成今日放電！'}
       </button>
       <div class="gap8"></div>
-      ${aiEnabled() ? `<div class="row-between">
-        <button class="btn ghost" style="flex:1" onclick="regenEnergy()">🔄 換一組</button>
-        <button class="btn purple" style="flex:1" onclick="aiEnergy(this)">🎲 AI 出新動作</button>
-      </div>` : `<button class="btn block ghost" onclick="regenEnergy()">🔄 換一組</button>`}`;
+      <button class="btn block ${aiEnabled()?'purple':'ghost'}" onclick="newEnergy(this)">${aiEnabled()?'🎲 換新動作（AI）':'🔄 換一組'}</button>`;
   } else {
     taskHtml = `<div class="empty"><div class="e">⚡</div>選好條件，按下方按鈕<br>幫 ${esc(c.name)} 產生今日放電任務！</div>
-      <button class="btn block" onclick="regenEnergy()">產生今日放電任務 💥</button>
-      ${aiEnabled() ? `<div class="gap8"></div><button class="btn block purple" onclick="aiEnergy(this)">🎲 用 AI 產生</button>` : ''}`;
+      <button class="btn block ${aiEnabled()?'purple':''}" onclick="newEnergy(this)">${aiEnabled()?'🎲 用 AI 產生動作':'產生今日放電任務 💥'}</button>`;
   }
 
   $app.innerHTML = `
@@ -1408,7 +1415,7 @@ function renderChores() {
     <div class="gap8"></div>
     <small class="hint center" style="display:block">依 ${esc(child().name)}（${child().age} 歲）抽 1～3 個適齡任務</small>
 
-    ${aiEnabled() ? `<button class="btn block purple" onclick="aiChore(this)">🎲 AI 加新家事</button>` : ''}
+    ${aiEnabled() ? `<button class="btn block purple" onclick="aiChore(this)">🎲 AI 加新家事到清單</button>` : ''}
     <div class="section-title">自己加家事</div>
     ${custom}
     <div class="card">
