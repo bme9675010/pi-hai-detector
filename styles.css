@@ -54,6 +54,14 @@ body{
 .page-in{animation:pagein .28s cubic-bezier(.22,.9,.3,1);}
 @keyframes pagein{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
 
+/* 內建題庫（可展開） */
+.lib{background:var(--card);border-radius:var(--radius);padding:6px 16px;margin-bottom:14px;box-shadow:var(--shadow);}
+.lib summary{cursor:pointer;font-weight:800;padding:10px 0;list-style:none;color:var(--muted);}
+.lib summary::-webkit-details-marker{display:none;}
+.lib[open] summary{color:var(--ink);border-bottom:1px solid var(--line);margin-bottom:6px;}
+.lib-item{padding:8px 2px;border-bottom:1px solid var(--line);font-size:.9rem;line-height:1.4;}
+.lib-item:last-child{border-bottom:none;}
+
 /* 即時編輯鎖橫幅 */
 #lockbar{
   display:none;position:fixed;top:0;left:50%;transform:translateX(-50%);

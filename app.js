@@ -1033,13 +1033,18 @@ function renderEnergy() {
     </div>
     ${taskHtml}
 
-    <div class="section-title">自己加放電動作</div>
+    <div class="section-title">動作題庫</div>
+    <small class="hint" style="display:block;margin:-4px 4px 8px">產生今日動作時會從這個題庫（內建 ${D.ACTION_POOL.length} 個 + 你新增的）依年齡/場地/時段挑選。</small>
     ${(state.customActions||[]).map(a => `
       <div class="card task-item">
         <span class="n" style="background:var(--bg)">💪</span>
         <div class="body"><div class="t">${esc(a.name)}</div><div class="d">${esc(a.desc)} · ${esc(a.metric)}</div></div>
         <button class="btn ghost sm" onclick="delCustomAction('${a.id}')">🗑️</button>
       </div>`).join('')}
+    <details class="lib">
+      <summary>📖 查看內建動作（${D.ACTION_POOL.length} 個）</summary>
+      ${D.ACTION_POOL.map(a => `<div class="lib-item"><b>${esc(a.name)}</b> · ${esc(a.metric)} · <span class="pill ${a.difficulty}">${DIFF_LABEL[a.difficulty]}</span><br><span class="muted">${esc(a.desc)}</span></div>`).join('')}
+    </details>
     <div class="card">
       <div class="voice-field"><input type="text" id="ca-name" placeholder="動作名稱，例如：跳繩" maxlength="12" />${micBtn('ca-name')}</div>
       <div class="gap8"></div>
@@ -1227,6 +1232,7 @@ function renderLevels() {
 
     ${aiEnabled() ? `<button class="btn block purple" onclick="aiLevel(this)">🎲 AI 加新關卡</button>` : ''}
     <div class="section-title">自己加關卡</div>
+    <small class="hint" style="display:block;margin:-4px 4px 8px">新增的關卡會直接加到上面的闖關清單（一樣按順序解鎖）。</small>
     <div class="card">
       <div class="voice-field"><input type="text" id="lv-name" placeholder="關卡名稱，例如：超人飛行" maxlength="10" />${micBtn('lv-name')}</div>
       <div class="gap8"></div>
@@ -1436,6 +1442,10 @@ function renderChores() {
     </small>
     ${aiEnabled() ? `<button class="btn block purple" onclick="aiChore(this)">🎲 AI 加新家事到題庫</button>` : ''}
     ${custom}
+    <details class="lib">
+      <summary>📖 查看內建家事（${builtinCount} 個）</summary>
+      ${D.DEFAULT_CHORES.map(c => `<div class="lib-item"><b>${c.emoji||'🧹'} ${esc(c.name)}</b> · 適合 ${c.age} 歲 · ⭐${c.stars}<br><span class="muted">${esc(c.desc)}</span></div>`).join('')}
+    </details>
     <div class="card">
       <div class="voice-field"><input type="text" id="cc-name" placeholder="家事名稱，例如：幫忙摺被子" maxlength="14" />${micBtn('cc-name')}</div>
       <div class="gap8"></div>
