@@ -92,10 +92,20 @@ function choresForChild() {
   return pool.length ? pool : allChores();
 }
 // 放電動作：預設 + 自訂（自訂動作預設適用所有年齡/場地/時段）
-function allActions() {
-  const custom = Array.isArray(state.customActions) ? state.customActions : [];
-  return [...D.ACTION_POOL, ...custom];
+// 放電動作題庫：第一次使用把內建併入 state.customActions，之後內建/自訂皆可編輯刪除
+function ensureActionLib() {
+  if (!Array.isArray(state.customActions)) state.customActions = [];
+  const hasBuiltin = state.customActions.some(a => /^a\d+$/.test(a.id));
+  if (!hasBuiltin && !state.actionSeeded) {
+    const defs = D.ACTION_POOL.map((a, i) => ({ id: 'a' + i, ...a }));
+    state.customActions = [...defs, ...state.customActions];
+    state.actionSeeded = true;
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {}  // 種子化不更新時間戳
+  }
+  return state.customActions;
 }
+function allActions() { return ensureActionLib(); }
+function actionById(id) { return allActions().find(a => a.id === id); }
 
 /* ---------------- 連續天數 streak ---------------- */
 function markActiveToday() {
@@ -1041,18 +1051,19 @@ function renderEnergy() {
     </div>
     ${taskHtml}
 
-    <div class="section-title">動作題庫</div>
-    <small class="hint" style="display:block;margin:-4px 4px 8px">產生今日動作時會從這個題庫（內建 ${D.ACTION_POOL.length} 個 + 你新增的）依年齡/場地/時段挑選。</small>
-    ${(state.customActions||[]).map(a => `
-      <div class="card task-item">
+    ${(() => { const lib = allActions(); return `
+    <div class="section-title">動作題庫（${lib.length}）</div>
+    <small class="hint" style="display:block;margin:-4px 4px 8px">產生今日動作會從題庫依年齡/場地/時段挑。✏️ 改、🗑️ 刪都可以。</small>
+    <details class="lib">
+      <summary>📋 展開題庫（${lib.length} 個動作）</summary>
+      ${lib.map(a => `<div class="task-item" style="padding:8px 0;border-bottom:1px solid var(--line)">
         <span class="n" style="background:var(--bg)">💪</span>
-        <div class="body"><div class="t">${esc(a.name)}</div><div class="d">${esc(a.desc)} · ${esc(a.metric)}</div></div>
+        <div class="body"><div class="t">${esc(a.name)}</div><div class="d">${esc(a.desc)} · ${esc(a.metric)} · ${DIFF_LABEL[a.difficulty]||''}</div></div>
+        <button class="btn ghost sm" onclick="editAction('${a.id}')">✏️</button>
         <button class="btn ghost sm" onclick="delCustomAction('${a.id}')">🗑️</button>
       </div>`).join('')}
-    <details class="lib">
-      <summary>📖 查看內建動作（${D.ACTION_POOL.length} 個）</summary>
-      ${D.ACTION_POOL.map(a => `<div class="lib-item"><b>${esc(a.name)}</b> · ${esc(a.metric)} · <span class="pill ${a.difficulty}">${DIFF_LABEL[a.difficulty]}</span><br><span class="muted">${esc(a.desc)}</span></div>`).join('')}
-    </details>
+    </details>`; })()}
+    <div class="section-title">新增動作</div>
     <div class="card">
       <div class="voice-field"><input type="text" id="ca-name" placeholder="動作名稱，例如：跳繩" maxlength="12" />${micBtn('ca-name')}</div>
       <div class="gap8"></div>
@@ -1085,9 +1096,47 @@ function addCustomAction() {
   bumpShared(); save(); renderEnergy();
 }
 function delCustomAction(id) {
-  if (!confirm('刪除這個自訂動作？')) return;
+  if (!confirm('刪除這個動作？')) return;
   state.customActions = (state.customActions || []).filter(a => a.id !== id);
   bumpShared(); save(); renderEnergy();
+}
+function editAction(id) {
+  const a = actionById(id);
+  if (!a) return;
+  modal(`
+    <h2>編輯動作</h2>
+    <div style="text-align:left">
+      <div class="field-label">名稱</div>
+      <input type="text" id="ea-name" value="${esc(a.name)}" maxlength="12" />
+      <div class="field-label">說明</div>
+      <input type="text" id="ea-desc" value="${esc(a.desc)}" maxlength="24" />
+      <div class="field-label">時間/次數</div>
+      <input type="text" id="ea-metric" value="${esc(a.metric)}" maxlength="10" />
+      <div class="field-label">難度</div>
+      <select id="ea-diff" class="choice" style="width:100%">
+        <option value="easy" ${a.difficulty==='easy'?'selected':''}>簡單</option>
+        <option value="normal" ${a.difficulty==='normal'?'selected':''}>普通</option>
+        <option value="hard" ${a.difficulty==='hard'?'selected':''}>挑戰</option>
+      </select>
+    </div>
+    <div class="gap8"></div>
+    <button class="btn block green" onclick="saveAction('${id}')">儲存</button>
+    <div class="gap8"></div>
+    <button class="btn block ghost" onclick="this.closest('.modal-mask').remove()">取消</button>
+  `);
+}
+function saveAction(id) {
+  const a = actionById(id);
+  if (!a) return;
+  const name = (document.getElementById('ea-name').value || '').trim();
+  if (!name) { alert('請輸入名稱'); return; }
+  a.name = name;
+  a.desc = (document.getElementById('ea-desc').value || '').trim();
+  a.metric = (document.getElementById('ea-metric').value || '').trim() || '30 秒';
+  a.difficulty = document.getElementById('ea-diff').value;
+  bumpShared(); save();
+  document.querySelector('.modal-mask')?.remove();
+  renderEnergy();
 }
 
 /* ---- 天氣 banner ---- */
@@ -1171,8 +1220,10 @@ function generateActions() {
 }
 function regenEnergy() {
   if (blockedByLock()) return;
+  const actions = generateActions();
+  if (!actions.length) { toast('動作題庫是空的，請先到下方新增動作'); return; }
   const cd = cdata();
-  cd.energyToday = { date: todayStr(), actions: generateActions(), rewarded:false };
+  cd.energyToday = { date: todayStr(), actions, rewarded:false };
   save(); renderEnergy();
 }
 function toggleEnergy(i) {
@@ -1198,7 +1249,7 @@ function renderLevels() {
   const cd = cdata();
   const done = cd.levels.filter(l=>l.done).length;
   const total = cd.levels.length;
-  const pct = Math.round(done/total*100);
+  const pct = total ? Math.round(done/total*100) : 0;
 
   // 第一個未完成的就是「目前可挑戰」，其後上鎖
   const firstUndone = cd.levels.findIndex(l=>!l.done);
@@ -1219,6 +1270,7 @@ function renderLevels() {
         : unlocked
           ? `<button class="btn green sm" onclick="completeLevel('${l.id}',event)">完成</button>`
           : `<span class="muted" style="font-size:.8rem">未解鎖</span>`}
+      <button class="btn ghost sm" onclick="editLevel('${l.id}')">✏️</button>
       <button class="btn ghost sm" onclick="delLevel('${l.id}')">🗑️</button>
     </div>`;
   }).join('');
@@ -1233,7 +1285,8 @@ function renderLevels() {
         <strong>闖關進度</strong><span class="metric">${done} / ${total} 關</span>
       </div>
       <div class="progress-wrap"><div class="progress-bar" style="width:${pct}%"></div></div>
-      ${done===total?`<p class="center" style="margin:10px 0 0;font-weight:900">🎉 全部破關！你是運動小超人！</p>`:''}
+      ${total>0 && done===total?`<p class="center" style="margin:10px 0 0;font-weight:900">🎉 全部破關！你是運動小超人！</p>`:''}
+      ${total===0?`<p class="center muted" style="margin:10px 0 0">還沒有關卡，到下面新增一個吧</p>`:''}
     </div>
     ${items}
     ${done>0?`<button class="btn block ghost" onclick="resetLevels()">重新開始所有關卡</button>`:''}
@@ -1270,6 +1323,44 @@ function delLevel(id) {
   const cd = cdata();
   cd.levels = cd.levels.filter(l => l.id !== id);
   save(); renderLevels();
+}
+function editLevel(id) {
+  if (blockedByLock()) return;
+  const l = cdata().levels.find(x => x.id === id);
+  if (!l) return;
+  const typeOpts = Object.entries(D.LEVEL_TYPE_LABEL)
+    .map(([v, lab]) => `<option value="${v}" ${l.type===v?'selected':''}>${lab}</option>`).join('');
+  modal(`
+    <h2>編輯關卡</h2>
+    <div style="text-align:left">
+      <div class="field-label">關卡名稱</div>
+      <input type="text" id="el-name" value="${esc(l.name)}" maxlength="10" />
+      <div class="field-label">完成條件</div>
+      <input type="text" id="el-goal" value="${esc(l.goal)}" maxlength="16" />
+      <div class="field-label">類型</div>
+      <select id="el-type" class="choice" style="width:100%">${typeOpts}</select>
+      <div class="field-label">圖示</div>
+      <input type="text" id="el-emoji" value="${esc(l.emoji)}" maxlength="2" style="text-align:center" />
+    </div>
+    <div class="gap8"></div>
+    <button class="btn block green" onclick="saveLevel('${id}')">儲存</button>
+    <div class="gap8"></div>
+    <button class="btn block ghost" onclick="this.closest('.modal-mask').remove()">取消</button>
+  `);
+}
+function saveLevel(id) {
+  const l = cdata().levels.find(x => x.id === id);
+  if (!l) return;
+  const name = (document.getElementById('el-name').value || '').trim();
+  if (!name) { alert('請輸入關卡名稱'); return; }
+  l.name = name;
+  l.goal = (document.getElementById('el-goal').value || '').trim() || '完成挑戰';
+  l.desc = l.goal;
+  l.type = document.getElementById('el-type').value;
+  l.emoji = (document.getElementById('el-emoji').value || '⭐').trim() || '⭐';
+  save();
+  document.querySelector('.modal-mask')?.remove();
+  renderLevels();
 }
 function completeLevel(id, ev) {
   if (blockedByLock()) return;
