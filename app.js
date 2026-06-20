@@ -268,10 +268,13 @@ function voiceInput(id) {
 }
 
 /* ---------------- AI 生成（呼叫 Cloudflare Worker 代理） ---------------- */
-function aiEnabled() { return !!(state.aiProxyUrl || '').trim(); }   // 沒設定網址就不顯示 AI 按鈕
+// AI/同步服務網址改存「本機獨立」設定（不隨 state 被匯入/還原/同步覆蓋）；相容舊的 state.aiProxyUrl
+const PROXY_KEY = 'pi_hai_proxy';
+function getProxy() { return (localStorage.getItem(PROXY_KEY) || (state && state.aiProxyUrl) || '').trim(); }
+function aiEnabled() { return !!getProxy(); }   // 沒設定網址就不顯示 AI 按鈕
 async function aiGenerate(type, params, btn) {
   if (blockedByLock()) return null;
-  const url = (state.aiProxyUrl || '').trim();
+  const url = getProxy();
   if (!url) { toast('請先到「管理」設定 AI 服務網址'); setTimeout(() => go('children'), 600); return null; }
   const orig = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '🤖 生成中…'; }
@@ -671,7 +674,7 @@ function renderChildren() {
       <small class="hint" style="display:block;margin-bottom:8px">
         貼上你的 Cloudflare Worker 網址，各任務就會出現「🎲 AI 生成」。沒設定也能正常用。
       </small>
-      <input type="text" id="ai-url" value="${esc(state.aiProxyUrl||'')}" placeholder="https://pi-hai-ai.xxx.workers.dev" />
+      <input type="text" id="ai-url" value="${esc(getProxy())}" placeholder="https://pi-hai-ai.xxx.workers.dev" />
       <div class="gap8"></div>
       <button class="btn block green" onclick="saveAiUrl()">儲存網址</button>
     </div>
@@ -835,15 +838,17 @@ function saveChild() {
   render();
 }
 function saveAiUrl() {
-  state.aiProxyUrl = (document.getElementById('ai-url').value || '').trim();
-  save();
-  toast(state.aiProxyUrl ? 'AI 服務網址已儲存 ✓' : '已清除 AI 網址');
+  const v = (document.getElementById('ai-url').value || '').trim();
+  localStorage.setItem(PROXY_KEY, v);
+  state.aiProxyUrl = v; save();   // 同步保留一份在 state（相容）
+  toast(v ? 'AI 服務網址已儲存 ✓' : '已清除 AI 網址');
+  renderChildren();
 }
 
 /* ---------------- 雲端同步（用同步碼 + Worker KV） ---------------- */
 const SYNC_CODE_KEY = 'pi_hai_sync_code';
 function syncBase() {
-  const u = (state.aiProxyUrl || '').trim().replace(/\/+$/, '');
+  const u = getProxy().replace(/\/+$/, '');
   return u;
 }
 function toggleSyncReveal(btn) {
@@ -2067,6 +2072,9 @@ function render() {
   // 頁面淡入動畫（重新觸發）
   $app.classList.remove('page-in'); void $app.offsetWidth; $app.classList.add('page-in');
 }
+
+// 相容：把舊的 state.aiProxyUrl 搬到本機獨立設定（只搬一次）
+if (!localStorage.getItem(PROXY_KEY) && state.aiProxyUrl) localStorage.setItem(PROXY_KEY, state.aiProxyUrl);
 
 applyTheme();
 render();
