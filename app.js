@@ -643,6 +643,23 @@ function renderChildren() {
     <div class="section-title">紀錄</div>
     <button class="btn block ghost" onclick="go('records')">📜 查看 ${esc(child().name)} 的星星與完成紀錄</button>
 
+    <div class="section-title">星星管理（${esc(child().name)}）</div>
+    <div class="card">
+      <div class="center" style="font-size:1.6rem;font-weight:900;color:var(--orange);margin-bottom:8px">⭐ ${state.stars[state.activeChild]||0}</div>
+      <div class="chip-group" style="justify-content:center">
+        <button class="choice" onclick="adjustStars(-10)">−10</button>
+        <button class="choice" onclick="adjustStars(-1)">−1</button>
+        <button class="choice" onclick="adjustStars(1)">＋1</button>
+        <button class="choice" onclick="adjustStars(10)">＋10</button>
+      </div>
+      <div class="gap8"></div>
+      <div class="row-between">
+        <input type="number" id="star-set" placeholder="直接設為…" min="0" style="flex:1" />
+        <button class="btn accent" onclick="setStarsExact()">設定</button>
+      </div>
+      <small class="hint" style="display:block;margin-top:6px">手動調整會記入「紀錄」，不影響「累積賺得」徽章。</small>
+    </div>
+
     <div class="section-title">外觀</div>
     <div class="card row-between">
       <strong>${localStorage.getItem('pi_hai_theme')==='dark'?'🌙 深色模式':'☀️ 淺色模式'}</strong>
@@ -839,6 +856,28 @@ function toggleAutoSync() {
   localStorage.setItem('pi_hai_autosync', off ? '1' : '0');   // 切換
   toast(off ? '已開啟自動同步' : '已關閉自動同步');
   renderChildren();
+}
+// 家長手動調整星星（不影響「累積賺得」，會記入紀錄）
+function adjustStars(delta) {
+  const id = state.activeChild;
+  const cur = state.stars[id] || 0;
+  const next = Math.max(0, cur + delta);
+  if (next === cur) return;
+  state.stars[id] = next;
+  logStar(next > cur ? 'earn' : 'spend', '家長調整', next - cur);
+  save(); renderChildren();
+  toast('已調整為 ⭐ ' + next);
+}
+function setStarsExact() {
+  const v = parseInt(document.getElementById('star-set').value, 10);
+  if (isNaN(v) || v < 0) { toast('請輸入 0 以上的數字'); return; }
+  const id = state.activeChild;
+  const cur = state.stars[id] || 0;
+  if (v === cur) { toast('星星數沒有變'); return; }
+  state.stars[id] = v;
+  logStar(v > cur ? 'earn' : 'spend', '家長設定', v - cur);
+  save(); renderChildren();
+  toast('星星已設為 ⭐ ' + v);
 }
 function saveDeviceName() {
   localStorage.setItem('pi_hai_device', (document.getElementById('dev-name').value || '').trim());
