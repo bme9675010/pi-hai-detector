@@ -295,6 +295,10 @@ export class FamilyRoom {
       } else if (m.type === 'release') {
         this.releaseBy(session.id); session.childId = null;
         this.broadcast();
+      } else if (m.type === 'synced') {
+        // 某台剛上傳更新 → 通知其他在線裝置立即拉取（即時同步）
+        const msg = JSON.stringify({ type: 'peersync' });
+        for (const [ws, s] of this.sessions) { if (s.id !== session.id) { try { ws.send(msg); } catch (e) {} } }
       }
     });
     const close = () => { this.sessions.delete(server); this.releaseBy(session.id); this.broadcast(); };

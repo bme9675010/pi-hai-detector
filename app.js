@@ -130,6 +130,7 @@ function save() {
   const cd = state.data[state.activeChild];
   if (cd) cd._t = Date.now();
   localStorage.setItem(STORE_KEY, JSON.stringify(state));
+  if (typeof scheduleSync === 'function') scheduleSync();   // 變更後自動上傳
 }
 function bumpShared() { state._sharedT = Date.now(); }   // 共用設定有變更時呼叫
 
@@ -512,7 +513,7 @@ function renderHome() {
       </button>
     </div>
     <div class="gap16"></div>
-    <p class="center"><small class="hint">資料只存在這支手機 · 不做任何醫療診斷</small></p>
+    <p class="center"><small class="hint">${syncActive() ? '資料存在手機並同步到雲端' : '資料只存在這支手機'} · 不做任何醫療診斷</small></p>
   `;
   loadWeather();   // 首頁也載入天氣
 }
@@ -860,6 +861,14 @@ function syncBase() {
   const u = getProxy().replace(/\/+$/, '');
   return u;
 }
+function syncActive() { return !!syncBase() && (localStorage.getItem(SYNC_CODE_KEY) || '').trim().length >= 6; }
+// 變更後自動上傳（debounce），讓另一台能很快拿到更新
+let syncTimer = null;
+function scheduleSync() {
+  if (!syncActive() || localStorage.getItem('pi_hai_autosync') === '0') return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => syncNow(true, null, true), 1200);   // notify=true：上傳後通知其他裝置
+}
 function toggleSyncReveal(btn) {
   const inp = document.getElementById('sync-code');
   inp.type = inp.type === 'password' ? 'text' : 'password';
@@ -983,12 +992,16 @@ function applyMerged(doc) {
   return true;
 }
 // 雙向同步：把本機送上去合併，再把合併結果套回（不會互相覆蓋，逐小孩比時間戳）
-async function syncNow(silent, btn) {
+// notify=true：上傳成功後透過 WebSocket 通知其他在線裝置立即拉取（近即時）
+let syncing = false;
+async function syncNow(silent, btn, notify) {
   const base = syncBase();
   const field = document.getElementById('sync-code');
   const code = (field ? field.value : (localStorage.getItem(SYNC_CODE_KEY) || '')).trim();
   if (!base || code.length < 6) { if (!silent) toast('請先設定服務網址與同步碼（≥6 字）'); return; }
   if (field) localStorage.setItem(SYNC_CODE_KEY, code);
+  if (syncing) return;            // 避免重入
+  syncing = true;
   let orig;
   if (btn) { orig = btn.textContent; btn.disabled = true; btn.textContent = '☁️ 同步中…'; }
   try {
@@ -1000,9 +1013,10 @@ async function syncNow(silent, btn) {
     if (!res.ok || d.error) throw new Error(d.error || ('HTTP ' + res.status));
     applyMerged(d.doc);
     render();
+    if (notify && lockWs && lockWs.readyState === 1) lockWs.send(JSON.stringify({ type: 'synced' }));  // 通知其他裝置
     if (!silent) toast('☁️ 已同步（每個小孩各自合併）');
   } catch (e) { if (!silent) toast('同步失敗：' + e.message); }
-  finally { if (btn) { btn.disabled = false; btn.textContent = orig; } }
+  finally { syncing = false; if (btn) { btn.disabled = false; btn.textContent = orig; } }
 }
 // 開啟 App / 回前景自動雙向同步
 function autoSyncPull() {
@@ -1011,13 +1025,13 @@ function autoSyncPull() {
 }
 
 /* ---------------- 即時編輯鎖（WebSocket → Worker Durable Object） ---------------- */
-let lockWs = null, lockSid = null, lockMap = {}, lockReconnect = null, lockPing = null, prevLockedOut = false;
+let lockWs = null, lockSid = null, lockMap = {}, lockReconnect = null, lockPing = null, prevLockedOut = false, peerSyncTimer = null;
 function deviceName() { return (localStorage.getItem('pi_hai_device') || '').trim() || '某台裝置'; }
-function lockEnabled() {
-  return localStorage.getItem('pi_hai_lock') !== '0'
-    && !!syncBase() && (localStorage.getItem(SYNC_CODE_KEY) || '').trim().length >= 6;
-}
-function lockedOut() {                       // 目前這個小孩被「別台」鎖住？
+function lockOn() { return localStorage.getItem('pi_hai_lock') !== '0'; }   // 編輯鎖開關
+// WebSocket 連線條件：只要有設定雲端同步就連（同時用於即時鎖 + 即時同步通知）
+function lockEnabled() { return syncActive(); }
+function lockedOut() {                       // 目前這個小孩被「別台」鎖住？（鎖關閉時永遠視為沒鎖）
+  if (!lockOn()) return false;
   const h = lockMap[state.activeChild];
   return !!(h && h.sid && h.sid !== lockSid);
 }
@@ -1042,6 +1056,10 @@ function lockConnect() {
     let m; try { m = JSON.parse(ev.data); } catch { return; }
     if (m.type === 'welcome') { lockSid = m.sid; lockAcquire(); }
     else if (m.type === 'locks') { lockMap = m.locks || {}; evalLock(); }
+    else if (m.type === 'peersync') {           // 別台剛更新 → 立即拉取（不再通知，避免迴圈）
+      clearTimeout(peerSyncTimer);
+      peerSyncTimer = setTimeout(() => syncNow(true, null, false), 400);
+    }
   };
   lockWs.onclose = () => { lockWs = null; clearInterval(lockPing); if (lockEnabled()) { clearTimeout(lockReconnect); lockReconnect = setTimeout(lockConnect, 4000); } };
   lockWs.onerror = () => { try { lockWs.close(); } catch (e) {} };
@@ -1053,13 +1071,13 @@ function stealLock() {
   else { lockConnect(); }
 }
 function lockAcquire() {
-  if (lockWs && lockWs.readyState === 1) lockWs.send(JSON.stringify({ type: 'acquire', childId: state.activeChild, name: deviceName() }));
+  if (lockOn() && lockWs && lockWs.readyState === 1) lockWs.send(JSON.stringify({ type: 'acquire', childId: state.activeChild, name: deviceName() }));
 }
 function lockRelease() {
   if (lockWs && lockWs.readyState === 1) lockWs.send(JSON.stringify({ type: 'release' }));
 }
 function evalLock() {
-  if (!lockMap[state.activeChild]) lockAcquire();   // 沒人持有就自己搶
+  if (lockOn() && !lockMap[state.activeChild]) lockAcquire();   // 沒人持有就自己搶
   const now = lockedOut();
   renderLockBar();
   if (now !== prevLockedOut) { prevLockedOut = now; render(); }   // 唯讀↔可編輯切換時重繪
