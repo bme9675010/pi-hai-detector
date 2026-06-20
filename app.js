@@ -736,6 +736,15 @@ function renderChildren() {
       <button class="btn block ghost" onclick="document.getElementById('importfile').click()">⬆️ 匯入還原</button>
       <input type="file" id="importfile" accept="application/json,.json" style="display:none" onchange="importData(event)" />
     </div>
+
+    <div class="section-title">重置進度</div>
+    <div class="card">
+      <small class="hint" style="display:block;margin-bottom:10px">
+        把<b>所有小孩</b>的星星與完成紀錄歸零，準備給小孩全新開始。<br>
+        保留：小孩、題庫、獎勵、設定。只清：星星、闖關進度、打勾、各種紀錄。
+      </small>
+      <button class="btn block" style="background:#E05555;box-shadow:0 4px 0 #b53c3c" onclick="resetProgress()">🧹 星星與紀錄全部歸零</button>
+    </div>
   `;
 }
 
@@ -883,6 +892,33 @@ function setStarsExact() {
   logStar(v > cur ? 'earn' : 'spend', '家長設定', v - cur);
   save(); renderChildren();
   toast('星星已設為 ⭐ ' + v);
+}
+// 重置所有小孩的進度（星星/紀錄/完成狀態歸零），保留小孩、題庫、獎勵、設定
+function resetProgress() {
+  if (!confirm('確定把「所有小孩」的星星與完成紀錄全部歸零嗎？\n（小孩、題庫、獎勵、設定都會保留，只清進度）')) return;
+  if (!confirm('再次確認：星星、闖關進度、打勾、各種紀錄都會清空，無法復原。')) return;
+  const now = Date.now();
+  for (const c of state.children) {
+    const id = c.id;
+    state.stars[id] = 0;
+    if (state.earned) state.earned[id] = 0;
+    const d = state.data[id];
+    if (!d) continue;
+    d.energyToday = null;
+    (d.levels || []).forEach(l => l.done = false);
+    d.levelAwarded = [];
+    if (d.flows) ['morning', 'night'].forEach(k => { if (d.flows[k]) { d.flows[k].checked = {}; d.flows[k]._rewarded = ''; d.flows[k].date = ''; } });
+    d.chores = { date: '', drawn: [], doneIds: [] };
+    d.status = {};
+    d.redeemLog = [];
+    d.awarded = { date: '', keys: [] };
+    d.activeDays = [];
+    d.starLog = [];
+    d._t = now;   // 讓每個小孩的重置都會同步到雲端（以較新為準）
+  }
+  save();
+  toast('已重置所有進度 ✓');
+  render();
 }
 function saveDeviceName() {
   localStorage.setItem('pi_hai_device', (document.getElementById('dev-name').value || '').trim());
