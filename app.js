@@ -695,7 +695,7 @@ function renderChildren() {
         全家用同一組同步碼（≥6 字）。每個小孩的進度各自合併，<b>不同裝置同時用也不會互相蓋掉</b>。需先設好上面的服務網址。
       </small>
       <div class="row-between">
-        <input type="password" id="sync-code" value="${esc(localStorage.getItem('pi_hai_sync_code')||'')}" placeholder="全家共用同步碼，例如 family-code" style="flex:1" />
+        <input type="password" id="sync-code" value="${esc(localStorage.getItem('pi_hai_sync_code')||'')}" placeholder="全家共用的一組密碼（≥6 字）" style="flex:1" />
         <button class="btn ghost sm" onclick="toggleSyncReveal(this)">👁️</button>
       </div>
       <div class="gap8"></div>
