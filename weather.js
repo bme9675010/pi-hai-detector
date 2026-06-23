@@ -67,7 +67,7 @@ function getCoords(fresh) {
 /* 反向地理編碼：座標 → { name, city, district } */
 async function reverseName(lat, lon) {
   try {
-    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&accept-language=zh-TW&email=you@example.com`);
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&accept-language=zh-TW`);
     if (r.ok) {
       const a = (await r.json()).address || {};
       const city = a.city || a.county || a.state || '';
