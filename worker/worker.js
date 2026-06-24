@@ -126,7 +126,17 @@ export default {
         const d = JSON.parse(raw);
         const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' });
         if (d.date !== today) return json({ app: '家事幫手', items: [{ text: '今日尚未記錄家事', level: 'info' }] }, 200, getCors);
-        return json({ app: '家事幫手', items: d.items || [] }, 200, getCors);
+        // 新格式：多次更新 { updates: [{items, time}] }；舊格式相容
+        const updates = d.updates;
+        if (!Array.isArray(updates)) return json({ app: '家事幫手', items: d.items || [] }, 200, getCors);
+        const items = [];
+        updates.forEach(u => {
+          const prefix = u.time ? `[${u.time}] ` : '';
+          (u.items || []).forEach(it => items.push({ text: prefix + it.text, level: it.level }));
+        });
+        const lastTime = updates[updates.length - 1]?.time || '';
+        items.push({ text: `最後更新 ${lastTime}（共 ${updates.length} 次）`, level: 'info' });
+        return json({ app: '家事幫手', items }, 200, getCors);
       }
 
       // 家庭總控台：出發了摘要（App 推送，Portal 讀取）
@@ -139,32 +149,56 @@ export default {
         const d = JSON.parse(raw);
         const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' });
         if (d.date !== today) return json({ app: '出發了', items: [{ text: '今日尚未使用出發了', level: 'info' }] }, 200, getCors);
-        return json({ app: '出發了', items: d.items || [] }, 200, getCors);
+        // 新格式：多計畫 { plans: [{items, time}] }；舊格式相容
+        const plans = d.plans;
+        if (!Array.isArray(plans)) return json({ app: '出發了', items: d.items || [] }, 200, getCors);
+        const items = [];
+        plans.forEach((plan, i) => {
+          const planItems = plan.items || [];
+          // 第一筆：計畫名稱（第1個 item）
+          const title = planItems[0];
+          if (title) items.push({ text: `計畫${i + 1}：${title.text.replace(/^計畫：/, '')}`, level: 'info' });
+          // 中間：目的地 + 攜帶（折疊細節）
+          planItems.slice(1, -1).forEach(it => items.push({ text: `　${it.text}`, level: it.level }));
+        });
+        // 最後一筆 = 摘要（Portal 折疊時顯示）
+        items.push({ text: `今日共 ${plans.length} 個出行計畫`, level: 'ok' });
+        return json({ app: '出發了', items }, 200, getCors);
       }
 
       return json({ error: 'not found' }, 404, getCors);
     }
 
-    // ---- App 推送：家事幫手今日摘要 ----
+    // ---- App 推送：家事幫手今日摘要（append 模式，同日多次累積）----
     if (request.method === 'POST' && url.pathname === '/chores/save') {
       if (!env.SYNC) return json({ error: 'KV 尚未綁定' }, 500, cors);
       const code = String(url.searchParams.get('code') || '').trim();
       if (code.length < 6) return json({ error: '同步碼至少 6 個字' }, 400, cors);
       let b; try { b = await request.json(); } catch { return json({ error: 'bad json' }, 400, cors); }
       const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' });
-      await env.SYNC.put('chores:' + code, JSON.stringify({ date: today, items: b.items || [] }), { expirationTtl: 86400 });
-      return json({ ok: true }, 200, cors);
+      const timeStr = new Date().toLocaleTimeString('zh-TW', { timeZone: 'Asia/Taipei', hour: '2-digit', minute: '2-digit', hour12: false });
+      const rawEx = await env.SYNC.get('chores:' + code);
+      const existing = rawEx ? JSON.parse(rawEx) : null;
+      const updates = (existing?.date === today && Array.isArray(existing?.updates)) ? existing.updates : [];
+      updates.push({ items: b.items || [], time: timeStr });
+      await env.SYNC.put('chores:' + code, JSON.stringify({ date: today, updates }), { expirationTtl: 86400 });
+      return json({ ok: true, count: updates.length }, 200, cors);
     }
 
-    // ---- App 推送：出發了今日摘要 ----
+    // ---- App 推送：出發了今日計畫（append 模式，同日多趟累積）----
     if (request.method === 'POST' && url.pathname === '/depart/save') {
       if (!env.SYNC) return json({ error: 'KV 尚未綁定' }, 500, cors);
       const code = String(url.searchParams.get('code') || '').trim();
       if (code.length < 6) return json({ error: '同步碼至少 6 個字' }, 400, cors);
       let b; try { b = await request.json(); } catch { return json({ error: 'bad json' }, 400, cors); }
       const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' });
-      await env.SYNC.put('depart:' + code, JSON.stringify({ date: today, items: b.items || [] }), { expirationTtl: 86400 });
-      return json({ ok: true }, 200, cors);
+      const timeStr = new Date().toLocaleTimeString('zh-TW', { timeZone: 'Asia/Taipei', hour: '2-digit', minute: '2-digit', hour12: false });
+      const rawEx = await env.SYNC.get('depart:' + code);
+      const existing = rawEx ? JSON.parse(rawEx) : null;
+      const plans = (existing?.date === today && Array.isArray(existing?.plans)) ? existing.plans : [];
+      plans.push({ items: b.items || [], time: timeStr });
+      await env.SYNC.put('depart:' + code, JSON.stringify({ date: today, plans }), { expirationTtl: 86400 });
+      return json({ ok: true, count: plans.length }, 200, cors);
     }
 
     // ---- Scriptable 推送：運動小夥伴今日摘要 ----
