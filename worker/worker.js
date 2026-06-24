@@ -34,8 +34,11 @@ function pickNow(loc, elName) {
 
 export default {
   async fetch(request, env) {
+    const url = new URL(request.url);
+    // push 端點（App → Worker）開放所有來源；AI 生成端點維持 ALLOWED_ORIGIN 限制
+    const isPushPath = ['/depart/save', '/chores/save', '/exercise/save'].includes(url.pathname);
     const cors = {
-      'Access-Control-Allow-Origin': env.ALLOWED_ORIGIN || '*',
+      'Access-Control-Allow-Origin': isPushPath ? '*' : (env.ALLOWED_ORIGIN || '*'),
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
     };
@@ -46,7 +49,6 @@ export default {
     const originOk = !(allowed && allowed !== '*' && origin !== allowed);
 
     // ---- 即時編輯鎖：WebSocket → Durable Object（一個同步碼一間房）----
-    const url = new URL(request.url);
     if (url.pathname === '/room') {
       if (request.headers.get('Upgrade') !== 'websocket') return new Response('expected websocket', { status: 426 });
       if (!originOk) return new Response('forbidden', { status: 403 });
@@ -55,6 +57,127 @@ export default {
       if (code.length < 6) return new Response('bad code', { status: 400 });
       const stub = env.ROOM.get(env.ROOM.idFromName(code));
       return stub.fetch(request);
+    }
+
+    // ---- GET 端點（不需要 body，Portal/Scriptable 可直接呼叫）----
+    if (request.method === 'GET') {
+      const gPath = url.pathname;
+      const getCors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS' };
+
+      // 家庭總控台：屁孩放電摘要
+      if (gPath === '/api/summary') {
+        if (!env.SYNC) return json({ app: '屁孩特攻隊', items: [{ text: 'KV 尚未綁定', level: 'info' }] }, 200, getCors);
+        const code = String(url.searchParams.get('code') || '').trim();
+        if (code.length < 6) return json({ app: '屁孩特攻隊', items: [{ text: '需提供同步碼', level: 'info' }] }, 200, getCors);
+        const raw = await env.SYNC.get('m2:' + code);
+        if (!raw) return json({ app: '屁孩特攻隊', items: [{ text: '尚無雲端資料', level: 'info' }] }, 200, getCors);
+        const stored = JSON.parse(raw);
+        const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' });
+        const items = [];
+        let doneCount = 0, totalChildren = 0;
+        for (const [, child] of Object.entries(stored.children || {})) {
+          const name = child.profile?.name || '小孩';
+          const et = child.data?.energyToday;
+          totalChildren++;
+          if (et && et.date === today) {
+            const done = (et.actions || []).filter(a => a.done).length;
+            const total = (et.actions || []).length;
+            if (et.rewarded) { items.push({ text: `${name} 今日放電任務完成 ✓`, level: 'ok' }); doneCount++; }
+            else items.push({ text: `${name} 放電任務 ${done}/${total} 未全完`, level: 'warn' });
+          } else {
+            items.push({ text: `${name} 今日放電任務尚未開始`, level: 'warn' });
+          }
+          const stars = child.stars ?? 0;
+          if (stars > 0) items.push({ text: `${name} 目前 ⭐ ${stars} 顆星`, level: 'info' });
+        }
+        if (items.length === 0) { items.push({ text: '尚無小孩資料', level: 'info' }); }
+        // 多個小孩時，最後加一筆總結（折疊時顯示這一筆）
+        else if (totalChildren > 1) {
+          const level = doneCount === totalChildren ? 'ok' : doneCount > 0 ? 'warn' : 'warn';
+          const text = doneCount === totalChildren
+            ? `全員 ${totalChildren}/${totalChildren} 完成放電 🎉`
+            : `${doneCount}/${totalChildren} 位完成放電任務`;
+          items.push({ text, level });
+        }
+        return json({ app: '屁孩特攻隊', items }, 200, getCors);
+      }
+
+      // 家庭總控台：運動小夥伴摘要（Scriptable 寫入，Portal 讀取）
+      if (gPath === '/api/exercise') {
+        if (!env.SYNC) return json({ app: '運動小夥伴', items: [{ text: 'KV 尚未綁定', level: 'info' }] }, 200, getCors);
+        const code = String(url.searchParams.get('code') || '').trim();
+        if (code.length < 6) return json({ app: '運動小夥伴', items: [{ text: '需提供同步碼', level: 'info' }] }, 200, getCors);
+        const raw = await env.SYNC.get('ex:' + code);
+        if (!raw) return json({ app: '運動小夥伴', items: [{ text: '今日尚未記錄運動', level: 'info' }] }, 200, getCors);
+        const d = JSON.parse(raw);
+        const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' });
+        if (d.date !== today) return json({ app: '運動小夥伴', items: [{ text: '今日尚未記錄運動', level: 'info' }] }, 200, getCors);
+        const items = d.items || [{ text: d.summary || '已記錄運動資料', level: 'ok' }];
+        return json({ app: '運動小夥伴', items }, 200, getCors);
+      }
+
+      // 家庭總控台：家事幫手摘要（App 推送，Portal 讀取）
+      if (gPath === '/api/chores-summary') {
+        if (!env.SYNC) return json({ app: '家事幫手', items: [{ text: 'KV 尚未綁定', level: 'info' }] }, 200, getCors);
+        const code = String(url.searchParams.get('code') || '').trim();
+        if (code.length < 6) return json({ app: '家事幫手', items: [{ text: '需提供同步碼', level: 'info' }] }, 200, getCors);
+        const raw = await env.SYNC.get('chores:' + code);
+        if (!raw) return json({ app: '家事幫手', items: [{ text: '今日尚未記錄家事', level: 'info' }] }, 200, getCors);
+        const d = JSON.parse(raw);
+        const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' });
+        if (d.date !== today) return json({ app: '家事幫手', items: [{ text: '今日尚未記錄家事', level: 'info' }] }, 200, getCors);
+        return json({ app: '家事幫手', items: d.items || [] }, 200, getCors);
+      }
+
+      // 家庭總控台：出發了摘要（App 推送，Portal 讀取）
+      if (gPath === '/api/depart-summary') {
+        if (!env.SYNC) return json({ app: '出發了', items: [{ text: 'KV 尚未綁定', level: 'info' }] }, 200, getCors);
+        const code = String(url.searchParams.get('code') || '').trim();
+        if (code.length < 6) return json({ app: '出發了', items: [{ text: '需提供同步碼', level: 'info' }] }, 200, getCors);
+        const raw = await env.SYNC.get('depart:' + code);
+        if (!raw) return json({ app: '出發了', items: [{ text: '今日尚未使用出發了', level: 'info' }] }, 200, getCors);
+        const d = JSON.parse(raw);
+        const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' });
+        if (d.date !== today) return json({ app: '出發了', items: [{ text: '今日尚未使用出發了', level: 'info' }] }, 200, getCors);
+        return json({ app: '出發了', items: d.items || [] }, 200, getCors);
+      }
+
+      return json({ error: 'not found' }, 404, getCors);
+    }
+
+    // ---- App 推送：家事幫手今日摘要 ----
+    if (request.method === 'POST' && url.pathname === '/chores/save') {
+      if (!env.SYNC) return json({ error: 'KV 尚未綁定' }, 500, cors);
+      const code = String(url.searchParams.get('code') || '').trim();
+      if (code.length < 6) return json({ error: '同步碼至少 6 個字' }, 400, cors);
+      let b; try { b = await request.json(); } catch { return json({ error: 'bad json' }, 400, cors); }
+      const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' });
+      await env.SYNC.put('chores:' + code, JSON.stringify({ date: today, items: b.items || [] }), { expirationTtl: 86400 });
+      return json({ ok: true }, 200, cors);
+    }
+
+    // ---- App 推送：出發了今日摘要 ----
+    if (request.method === 'POST' && url.pathname === '/depart/save') {
+      if (!env.SYNC) return json({ error: 'KV 尚未綁定' }, 500, cors);
+      const code = String(url.searchParams.get('code') || '').trim();
+      if (code.length < 6) return json({ error: '同步碼至少 6 個字' }, 400, cors);
+      let b; try { b = await request.json(); } catch { return json({ error: 'bad json' }, 400, cors); }
+      const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' });
+      await env.SYNC.put('depart:' + code, JSON.stringify({ date: today, items: b.items || [] }), { expirationTtl: 86400 });
+      return json({ ok: true }, 200, cors);
+    }
+
+    // ---- Scriptable 推送：運動小夥伴今日摘要 ----
+    if (request.method === 'POST' && url.pathname === '/exercise/save') {
+      if (!env.SYNC) return json({ error: 'KV 尚未綁定' }, 500, cors);
+      const code = String(url.searchParams.get('code') || '').trim();
+      if (code.length < 6) return json({ error: '同步碼至少 6 個字' }, 400, cors);
+      let body2;
+      try { body2 = await request.json(); } catch { return json({ error: 'bad json' }, 400, cors); }
+      const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' });
+      const payload = { date: today, items: body2.items || [], summary: body2.summary || '' };
+      await env.SYNC.put('ex:' + code, JSON.stringify(payload), { expirationTtl: 86400 * 3 });
+      return json({ ok: true }, 200, cors);
     }
 
     if (request.method !== 'POST') return json({ error: 'POST only' }, 405, cors);
