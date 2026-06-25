@@ -73,6 +73,12 @@ wrangler deploy
    另一台裝置輸入同一組同步碼按「從雲端下載」即可。
    ⚠️ 同步碼等於密碼，設長一點、不要外流。
 
+## 定時喚醒（Cron，避免冷啟動）
+
+`wrangler.toml` 的 `[triggers]` 設了 `crons = ["*/10 * * * *"]`，
+每 10 分鐘由 Worker 的 `scheduled` 事件去 ping Render 上的服務（health/summary），
+讓那些免費方案的服務不會因閒置冷啟動而變慢。不需要的話可移除 `[triggers]` 區塊。
+
 ## 本機測試（選用）
 ```
 wrangler dev
