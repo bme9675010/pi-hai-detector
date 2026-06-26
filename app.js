@@ -531,7 +531,7 @@ function homeWeatherHTML() {
   const isDefault = w.isDefault || (w.place && w.place.indexOf('預設') >= 0);
   return `<div id="home-weather" class="card" style="padding:12px 16px">
     <div class="row-between">
-      <div><span style="font-size:1.2rem">${w.emoji}</span> <strong>${w.temp}°</strong> ${esc(w.label)}
+      <div><span style="font-size:1.2rem">${w.emoji}</span> ${w.temp != null ? `<strong>${w.temp}°</strong> ` : ''}${esc(w.label)}
         <small class="hint">· ${esc(w.place)}</small></div>
       ${isDefault
         ? `<button class="btn accent sm" onclick="relocateWeather()">📍 用我的位置</button>`
@@ -1098,6 +1098,7 @@ function delChild(id) {
   if (!confirm('確定要刪除這個小孩的所有資料嗎？')) return;
   state.children = state.children.filter(c=>c.id!==id);
   delete state.stars[id]; delete state.data[id];
+  if (state.earned) delete state.earned[id];
   if (!state._deleted) state._deleted = {};
   state._deleted[id] = Date.now();          // 墓碑：讓刪除也能同步到其他裝置
   if (state.activeChild === id) state.activeChild = state.children[0].id;
@@ -1278,7 +1279,7 @@ function weatherBannerHTML() {
   const isDefault = w.isDefault || (w.place && w.place.indexOf('預設') >= 0);
   return `<div class="card" id="wbanner">
     <div class="row-between">
-      <div><span style="font-size:1.4rem">${w.emoji}</span> <strong>${w.temp}°</strong> ${esc(w.label)}
+      <div><span style="font-size:1.4rem">${w.emoji}</span> ${w.temp != null ? `<strong>${w.temp}°</strong> ` : ''}${esc(w.label)}
         <small class="hint">· ${esc(w.place)}</small></div>
       ${showApply ? `<button class="btn accent sm" onclick="energyFilter.place='${adv.place}';renderEnergy()">套用：${placeLbl}</button>` : ''}
     </div>
@@ -1520,12 +1521,13 @@ function resetLevels() {
 let activeFlow = 'morning';
 function renderFlows() {
   const cd = cdata();
-  // 跨日重置勾選
+  // 跨日重置勾選（只有真的改了才 save，避免每次進頁面都觸發雲端同步）
+  let flowDateChanged = false;
   ['morning','night'].forEach(k => {
     const f = cd.flows[k];
-    if (f.date !== todayStr()) { f.checked = {}; f.date = todayStr(); }
+    if (f.date !== todayStr()) { f.checked = {}; f.date = todayStr(); flowDateChanged = true; }
   });
-  save();
+  if (flowDateChanged) save();
 
   const tabs = [['morning','🌅 晨間'],['night','🌙 睡前']]
     .map(([k,l]) => `<button class="choice ${activeFlow===k?'on':''}" onclick="activeFlow='${k}';renderFlows()">${l}</button>`).join('');
@@ -2079,7 +2081,7 @@ function ensureToday() {
 function setStatus(key, val) {
   if (blockedByLock()) return;
   const s = ensureToday();
-  s[key] = (s[key]===val) ? undefined : val;
+  if (s[key] === val) delete s[key]; else s[key] = val;
   save(); renderStatus();
 }
 function setStatusNote(v) { ensureToday().note = v; save(); }
