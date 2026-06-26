@@ -2,17 +2,13 @@
 
 ## 待辦（尚未實作）
 
-### 提醒通知（推播）
-- 早上提醒做晨間流程、睡前提醒等。
-- Android Chrome PWA 可用 Notification API + 背景；iOS Safari PWA 推播限制多（需加到主畫面且支援有限）。
-- 可能需要簡單後端或排程；先評估僅本地 Notification 是否夠用。
-
 ### 自動化測試
 - 目前靠手動 + 預覽驗證。
 - 可加純函式單元測試（generateActions、awardOnce、computeStreak、reverseName、合併邏輯…）。
 
 ## 已知平台限制
 - iOS Safari 不支援 `navigator.vibrate`，完成任務只有音效、沒有震動（Android 兩者都有）。
+- 提醒通知：Android Chrome 效果最好；iOS 需加到主畫面（iOS 16.4+）才能收到 PWA 通知。SW 的 setTimeout 排程在瀏覽器完全關閉或手機重啟後需重新開 App 才會再次排程。
 
 ## 已完成（參考）
 - 5 模組 + 首頁、多小孩、星星、兌換商店、成就徽章、連續天數、歷史月曆
@@ -24,3 +20,4 @@
 - 星星防刷（每日每任務一次；闖關永久一次）、星星紀錄、紀錄分頁
 - 家長工具：PIN 鎖、星星手動調整、重置進度、備份匯出/匯入
 - 語音輸入、深色模式、底部導覽列、UI 美化
+- 提醒通知：晨間 / 睡前本地排程（管理頁設定時間；SW setTimeout；點通知跳流程頁）

@@ -149,6 +149,43 @@ function toggleTheme() {
   if (currentRoute() === 'children') render();
 }
 
+/* ---------------- 提醒通知（本地排程，不需伺服器） ---------------- */
+const NOTIFY_KEY = 'pi_hai_notify';
+function getNotifyPrefs() {
+  try { return JSON.parse(localStorage.getItem(NOTIFY_KEY) || '{}'); } catch { return {}; }
+}
+// 把今日提醒時間傳給 SW；SW 用 setTimeout 在指定時間發通知
+async function scheduleNotifications() {
+  if (!('Notification' in window) || !navigator.serviceWorker) return;
+  const prefs = getNotifyPrefs();
+  if (!prefs.enabled) return;
+  if (Notification.permission === 'default') {
+    const p = await Notification.requestPermission();
+    if (p !== 'granted') { toast('請允許通知才能啟用每日提醒'); return; }
+  }
+  if (Notification.permission !== 'granted') return;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    if (reg.active) reg.active.postMessage({ type: 'schedule-notify', prefs });
+  } catch (e) {}
+}
+function saveNotifyPrefs() {
+  const enabled = !!document.getElementById('notify-on')?.checked;
+  const morning = (document.getElementById('notify-morning')?.value || '07:30');
+  const night   = (document.getElementById('notify-night')?.value   || '20:30');
+  const prefs = { enabled, morning, night };
+  localStorage.setItem(NOTIFY_KEY, JSON.stringify(prefs));
+  scheduleNotifications();
+  toast(enabled ? `已設定提醒：晨間 ${morning}、睡前 ${night} ✓` : '已關閉提醒通知');
+  renderChildren();
+}
+// 點通知時 SW 傳訊告知頁面要跳轉
+if (navigator.serviceWorker) {
+  navigator.serviceWorker.addEventListener('message', e => {
+    if (e.data?.type === 'goto') go(e.data.route);
+  });
+}
+
 /* ---------------- 管理頁 PIN 鎖（本機閘門，防小孩亂動） ---------------- */
 const PIN_KEY = 'pi_hai_pin';
 let pinUnlocked = false;                       // 本次開啟 App 已解鎖就不再問
@@ -726,6 +763,35 @@ function renderChildren() {
             <input type="password" id="pin-set" inputmode="numeric" maxlength="4" placeholder="設 4 位數字" style="flex:1" />
             <button class="btn green" onclick="setPin()">開啟</button></div>`}
     </div>
+
+    <div class="section-title">提醒通知</div>
+    ${(() => {
+      const np = getNotifyPrefs();
+      const blocked = ('Notification' in window) && Notification.permission === 'denied';
+      return `<div class="card">
+        <small class="hint" style="display:block;margin-bottom:8px">
+          每天自動在指定時間提醒完成晨間 / 睡前流程。需允許通知，且 App 需在背景存活（Android Chrome 效果最好；iOS 需加到主畫面）。
+        </small>
+        ${blocked ? `<div class="hint" style="color:var(--primary);font-weight:700;margin-bottom:8px">⚠️ 通知權限已被封鎖，請到瀏覽器設定手動開啟。</div>` : ''}
+        <div class="row-between">
+          <label for="notify-on"><strong>開啟每日提醒</strong></label>
+          <input type="checkbox" id="notify-on" ${np.enabled ? 'checked' : ''} style="width:22px;height:22px;cursor:pointer" />
+        </div>
+        <div class="gap8"></div>
+        <div class="row-between">
+          <span>🌅 晨間流程提醒</span>
+          <input type="time" id="notify-morning" value="${np.morning || '07:30'}" style="font-size:1rem;border:1px solid var(--line);border-radius:8px;padding:4px 8px" />
+        </div>
+        <div class="gap8"></div>
+        <div class="row-between">
+          <span>🌙 睡前流程提醒</span>
+          <input type="time" id="notify-night" value="${np.night || '20:30'}" style="font-size:1rem;border:1px solid var(--line);border-radius:8px;padding:4px 8px" />
+        </div>
+        <div class="gap8"></div>
+        <button class="btn block green" onclick="saveNotifyPrefs()">儲存提醒設定</button>
+        <small class="hint" style="display:block;margin-top:6px">時間一到，通知會顯示在手機鎖定畫面；點通知直接開流程頁。</small>
+      </div>`;
+    })()}
 
     <div class="section-title">資料備份</div>
     <div class="card">
@@ -2134,8 +2200,9 @@ if (!localStorage.getItem(PROXY_KEY) && state.aiProxyUrl) localStorage.setItem(P
 
 applyTheme();
 render();
-autoSyncPull();   // 開啟 App 自動拉雲端最新
-lockConnect();    // 連上即時編輯鎖
+autoSyncPull();        // 開啟 App 自動拉雲端最新
+lockConnect();         // 連上即時編輯鎖
+scheduleNotifications(); // 重新排程今日提醒（每次開 App 都呼叫）
 
 // PWA 從背景回到前景時也檢查一次（至少間隔 20 秒，避免頻繁）
 let lastAutoPull = Date.now();
