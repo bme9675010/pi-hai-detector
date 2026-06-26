@@ -2,9 +2,7 @@
 
 ## 待辦（尚未實作）
 
-### 自動化測試
-- 目前靠手動 + 預覽驗證。
-- 可加純函式單元測試（generateActions、awardOnce、computeStreak、reverseName、合併邏輯…）。
+（目前無待辦項目）
 
 ## 已知平台限制
 - iOS Safari 不支援 `navigator.vibrate`，完成任務只有音效、沒有震動（Android 兩者都有）。
@@ -21,3 +19,4 @@
 - 家長工具：PIN 鎖、星星手動調整、重置進度、備份匯出/匯入
 - 語音輸入、深色模式、底部導覽列、UI 美化
 - 提醒通知：晨間 / 睡前本地排程（管理頁設定時間；SW setTimeout；點通知跳流程頁）
+- 自動化測試：68 個單元測試（Node.js 內建 test runner）；`npm test` 執行
