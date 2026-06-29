@@ -51,7 +51,7 @@ function blankChildData() {
       morning: { ...D.DEFAULT_FLOWS.morning, steps: D.DEFAULT_FLOWS.morning.steps.map(s=>({id:uid(),text:s})), checked:{}, date:'' },
       night:   { ...D.DEFAULT_FLOWS.night,   steps: D.DEFAULT_FLOWS.night.steps.map(s=>({id:uid(),text:s})), checked:{}, date:'' },
     })),
-    chores: { date:'', drawn:[], doneIds:[] },
+    chores: { date:'', drawn:[], manual:[], doneIds:[] },
     status: {},               // status[date] = {spirit, mood, ...}
     redeemLog: [],            // 兌換紀錄 [{name, cost, date}]
     awarded: { date:'', keys:[] }, // 今日已領星星的任務，防止重複領
@@ -235,6 +235,7 @@ function cdata() {
   if (!Array.isArray(state.data[id].redeemLog)) state.data[id].redeemLog = [];  // 相容舊資料
   if (!state.data[id].awarded) state.data[id].awarded = { date:'', keys:[] };
   if (!Array.isArray(state.data[id].activeDays)) state.data[id].activeDays = [];
+  if (!Array.isArray(state.data[id].chores.manual)) state.data[id].chores.manual = [];
   return state.data[id];
 }
 function addStars(n, ev) {
@@ -1686,34 +1687,136 @@ function finishFlow(ev) {
    模組 5：家事任務輪盤
    =========================================================== */
 let spinning = false;
+
+/* ---- 照片紀錄（本地 localStorage，不同步雲端） ---- */
+const PHOTO_KEY = 'pi_hai_photos';
+function getPhotos() {
+  try { return JSON.parse(localStorage.getItem(PHOTO_KEY) || '{}'); } catch { return {}; }
+}
+function savePhotos(p) { try { localStorage.setItem(PHOTO_KEY, JSON.stringify(p)); } catch {} }
+function photoKey(childId, choreId) { return `${childId}:${choreId}:${todayStr()}`; }
+function getChorePhoto(childId, choreId) { return getPhotos()[photoKey(childId, choreId)] || null; }
+function setChorePhoto(childId, choreId, dataUrl) {
+  const p = getPhotos(); p[photoKey(childId, choreId)] = dataUrl; savePhotos(p);
+}
+function removeChorePhoto(childId, choreId) {
+  const p = getPhotos(); delete p[photoKey(childId, choreId)]; savePhotos(p);
+}
+function cleanupOldPhotos() {
+  const today = todayStr(); const p = getPhotos(); let changed = false;
+  Object.keys(p).forEach(k => { if (!k.endsWith(':' + today)) { delete p[k]; changed = true; } });
+  if (changed) savePhotos(p);
+}
+function resizeImage(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const MAX = 480;
+      let w = img.naturalWidth, h = img.naturalHeight;
+      if (w > MAX) { h = Math.round(h * MAX / w); w = MAX; }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL('image/jpeg', 0.72));
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+function handleChorePhoto(choreId) {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'image/*';
+  inp.onchange = async () => {
+    const file = inp.files[0]; if (!file) return;
+    try {
+      const dataUrl = await resizeImage(file);
+      setChorePhoto(state.activeChild, choreId, dataUrl);
+      renderChores();
+    } catch { toast('照片處理失敗，請重試'); }
+  };
+  inp.click();
+}
+function removeChorePhotoUI(choreId) { removeChorePhoto(state.activeChild, choreId); renderChores(); }
+
+/* ---- 家長手動指派 ---- */
+function assignChore(id) {
+  if (blockedByLock()) return;
+  const cd = cdata(); const today = todayStr();
+  if (cd.chores.date !== today) {
+    cd.chores = { date: today, drawn: cd.chores.drawn || [], manual: [], doneIds: cd.chores.doneIds || [] };
+  }
+  if ((cd.chores.drawn || []).includes(id) || (cd.chores.manual || []).includes(id)) {
+    toast('這個家事已在今日任務中'); return;
+  }
+  cd.chores.manual.push(id);
+  save(); renderChores();
+}
+function removeAssignedChore(id) {
+  if (blockedByLock()) return;
+  const cd = cdata();
+  cd.chores.manual = (cd.chores.manual || []).filter(i => i !== id);
+  cd.chores.doneIds = (cd.chores.doneIds || []).filter(i => i !== id);
+  save(); renderChores();
+}
 function renderChores() {
   const cd = cdata();
-  const has = cd.chores.date === todayStr() && cd.chores.drawn.length;
+  const today = todayStr();
+  const hasToday = cd.chores.date === today;
+  const drawn = hasToday ? (cd.chores.drawn || []) : [];
+  const manual = cd.chores.manual || [];
+  const allTodayIds = [...drawn, ...manual.filter(id => !drawn.includes(id))];
+  const doneIds = cd.chores.doneIds || [];
 
   let stage;
   if (spinning) {
     stage = `<div class="wheel-stage"><div style="font-size:4rem" class="spin">🎡</div></div>`;
-  } else if (has) {
-    stage = cd.chores.drawn.map(id => {
+  } else if (allTodayIds.length) {
+    stage = allTodayIds.map(id => {
       const ch = choreById(id);
       if (!ch) return '';
-      const done = cd.chores.doneIds.includes(id);
+      const done = doneIds.includes(id);
+      const isManual = manual.includes(id) && !drawn.includes(id);
+      const photo = getChorePhoto(state.activeChild, id);
+      const badge = isManual ? `<span style="font-size:.68rem;color:var(--accent);background:var(--bg);padding:1px 6px;border-radius:8px;margin-left:4px">家長指派</span>` : '';
+      const photoThumb = photo
+        ? `<div style="margin-top:6px">
+             <img src="${photo}" style="max-width:100%;max-height:110px;border-radius:8px;object-fit:cover" />
+             <button class="btn ghost sm" style="margin-top:4px" onclick="removeChorePhotoUI('${id}')">🗑️ 移除照片</button>
+           </div>` : '';
       return `<div class="card task-item">
         <span class="n" style="background:var(--bg)">${ch.emoji || '🧹'}</span>
         <div class="body">
-          <div class="t">${esc(ch.name)}</div>
+          <div class="t">${esc(ch.name)}${badge}</div>
           <div class="d">${esc(ch.desc)} · 適合 ${ch.age} 歲</div>
           <div class="task-meta"><span class="metric">⭐ ${ch.stars} 顆</span></div>
+          ${photoThumb}
         </div>
-        <button class="check ${done?'done':''}" onclick="toggleChore('${id}',event)">${done?'✓':''}</button>
+        <div style="display:flex;flex-direction:column;gap:4px;align-items:center">
+          <button class="check ${done?'done':''}" onclick="toggleChore('${id}',event)">${done?'✓':''}</button>
+          <button class="btn ghost sm" title="拍照紀錄" onclick="handleChorePhoto('${id}')">📷</button>
+          ${isManual ? `<button class="btn ghost sm" title="移除指派" onclick="removeAssignedChore('${id}')">✕</button>` : ''}
+        </div>
       </div>`;
     }).join('');
   } else {
-    stage = `<div class="empty"><div class="e">🎡</div>還沒抽今天的家事<br>按下面「抽今日小任務」開始！</div>`;
+    stage = `<div class="empty"><div class="e">🎡</div>還沒抽今天的家事<br>按下面「抽今日小任務」或由家長手動指派！</div>`;
   }
 
-  // 家事題庫：內建 + 自訂全部可編輯/刪除
+  // 手動指派選項
   const lib = allChores();
+  const assignHtml = lib.map(c => {
+    const inToday = drawn.includes(c.id) || manual.includes(c.id);
+    return `<div class="card task-item">
+      <span class="n" style="background:var(--bg)">${c.emoji || '🧹'}</span>
+      <div class="body"><div class="t">${esc(c.name)}</div>
+        <div class="d">${esc(c.desc)} · 適合 ${c.age} 歲 · ⭐${c.stars}</div></div>
+      <button class="btn ${inToday?'ghost':'accent'} sm" ${inToday?'disabled':''} onclick="assignChore('${c.id}')">${inToday?'已指派':'指派'}</button>
+    </div>`;
+  }).join('');
+
+  // 家事題庫
   const libHtml = lib.map(c =>
     `<div class="card task-item">
       <span class="n" style="background:var(--bg)">${c.emoji || '🧹'}</span>
@@ -1726,18 +1829,24 @@ function renderChores() {
   $app.innerHTML = `
     ${topbar('家事任務輪盤')}
     <div class="section-title">🎯 今天要做的家事</div>
-    <small class="hint" style="display:block;margin:-4px 4px 8px">抽出來的才是今天的任務，打勾 ✓ 就能領星星</small>
+    <small class="hint" style="display:block;margin:-4px 4px 8px">打勾 ✓ 完成可領星星；📷 可拍照留下紀錄</small>
     ${stage}
     <button class="btn block purple" ${spinning?'disabled':''} onclick="drawChores()">
-      ${has?'🔄 重新抽今日小任務':'🎲 抽今日小任務'}
+      ${drawn.length?'🔄 重新抽隨機任務':'🎲 抽今日小任務'}
     </button>
     <div class="gap8"></div>
     <small class="hint center" style="display:block">依 ${esc(child().name)}（${child().age} 歲）抽 1～3 個適齡任務</small>
 
+    <details style="margin:12px 4px 4px">
+      <summary style="cursor:pointer;font-weight:600;padding:8px 4px;list-style:none">👩‍💼 家長手動指派家事 ▸</summary>
+      <small class="hint" style="display:block;margin:4px 0 8px">從題庫選今天要做的家事。手動指派與隨機抽籤並存，重新抽籤不會清掉手動指派。</small>
+      ${assignHtml}
+    </details>
+
     <div class="section-title">📋 家事題庫（${lib.length}）</div>
     <small class="hint" style="display:block;margin:-4px 4px 8px">
       這裡是「所有可能被抽到」的家事，✏️ 改、🗑️ 刪都可以，<b>不是今天的任務</b>；<br>
-      要做家事請用上面的「抽今日小任務」。
+      要做家事請用上面「抽今日小任務」或「家長手動指派」。
     </small>
     ${aiEnabled() ? `<button class="btn block purple" onclick="aiChore(this)">🎲 AI 加新家事到題庫</button>` : ''}
     ${libHtml}
@@ -1761,10 +1870,14 @@ function drawChores() {
   if (blockedByLock()) return;
   spinning = true; renderChores();
   setTimeout(() => {
+    const cd = cdata();
+    const prevManual = Array.isArray(cd.chores.manual) ? cd.chores.manual : [];
+    // 重抽只清掉隨機任務的完成紀錄，保留手動指派任務的完成紀錄
+    const prevDoneManual = (cd.chores.doneIds || []).filter(id => prevManual.includes(id));
     const pool = choresForChild();
     const n = Math.min(pool.length, 1 + Math.floor(Math.random()*3)); // 1~3
     const ids = sample(pool.map(c => c.id), n);
-    cdata().chores = { date: todayStr(), drawn: ids, doneIds: [] };
+    cd.chores = { date: todayStr(), drawn: ids, manual: prevManual, doneIds: prevDoneManual };
     spinning = false; save(); renderChores();
   }, 700);
 }
@@ -2203,6 +2316,7 @@ render();
 autoSyncPull();        // 開啟 App 自動拉雲端最新
 lockConnect();         // 連上即時編輯鎖
 scheduleNotifications(); // 重新排程今日提醒（每次開 App 都呼叫）
+cleanupOldPhotos();      // 清理昨日以前的照片快取
 
 // PWA 從背景回到前景時也檢查一次（至少間隔 20 秒，避免頻繁）
 let lastAutoPull = Date.now();
