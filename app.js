@@ -1760,6 +1760,15 @@ function removeAssignedChore(id) {
   cd.chores.doneIds = (cd.chores.doneIds || []).filter(i => i !== id);
   save(); renderChores();
 }
+function removeTodayChore(id) {
+  if (blockedByLock()) return;
+  const cd = cdata();
+  cd.chores.drawn  = (cd.chores.drawn  || []).filter(i => i !== id);
+  cd.chores.manual = (cd.chores.manual || []).filter(i => i !== id);
+  cd.chores.doneIds = (cd.chores.doneIds || []).filter(i => i !== id);
+  removeChorePhoto(state.activeChild, id);
+  save(); renderChores();
+}
 function renderChores() {
   const cd = cdata();
   const today = todayStr();
@@ -1790,14 +1799,14 @@ function renderChores() {
         <div class="body">
           <div class="t">${esc(ch.name)}${badge}</div>
           <div class="d">${esc(ch.desc)} · 適合 ${ch.age} 歲</div>
-          <div class="task-meta"><span class="metric">⭐ ${ch.stars} 顆</span></div>
+          <div class="task-meta" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <span class="metric">⭐ ${ch.stars} 顆</span>
+            <button class="btn ghost sm" onclick="handleChorePhoto('${id}')" style="padding:2px 7px">📷 拍照</button>
+            <button class="btn ghost sm" onclick="removeTodayChore('${id}')" style="padding:2px 7px;color:#aaa">✕ 移除</button>
+          </div>
           ${photoThumb}
         </div>
-        <div style="display:flex;flex-direction:column;gap:4px;align-items:center">
-          <button class="check ${done?'done':''}" onclick="toggleChore('${id}',event)">${done?'✓':''}</button>
-          <button class="btn ghost sm" title="拍照紀錄" onclick="handleChorePhoto('${id}')">📷</button>
-          ${isManual ? `<button class="btn ghost sm" title="移除指派" onclick="removeAssignedChore('${id}')">✕</button>` : ''}
-        </div>
+        <button class="check ${done?'done':''}" onclick="toggleChore('${id}',event)">${done?'✓':''}</button>
       </div>`;
     }).join('');
   } else {
