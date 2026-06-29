@@ -1703,8 +1703,10 @@ function removeChorePhoto(childId, choreId) {
   const p = getPhotos(); delete p[photoKey(childId, choreId)]; savePhotos(p);
 }
 function cleanupOldPhotos() {
-  const today = todayStr(); const p = getPhotos(); let changed = false;
-  Object.keys(p).forEach(k => { if (!k.endsWith(':' + today)) { delete p[k]; changed = true; } });
+  const keep = new Set();
+  for (let i = 0; i < 7; i++) { const d = new Date(); d.setDate(d.getDate() - i); keep.add(dateStr(d)); }
+  const p = getPhotos(); let changed = false;
+  Object.keys(p).forEach(k => { const date = k.split(':')[2]; if (!keep.has(date)) { delete p[k]; changed = true; } });
   if (changed) savePhotos(p);
 }
 function resizeImage(file) {
@@ -2111,6 +2113,7 @@ function renderRecords() {
   const earned = (state.earned && state.earned[state.activeChild]) || 0;
   const streak = computeStreak(cd);
   const log = (cd.starLog || []).slice().reverse();
+  const chorePhotoHtml = buildChorePhotoSection(state.activeChild);
   const logHtml = log.length ? log.map(e => `
     <div style="padding:8px 2px;border-bottom:1px solid var(--line)">
       <div class="row-between">
@@ -2140,7 +2143,39 @@ function renderRecords() {
     </div>
     <div class="section-title">星星明細（最近 ${log.length}）</div>
     <div class="card">${logHtml}</div>
+    ${chorePhotoHtml}
   `;
+}
+function buildChorePhotoSection(childId) {
+  const photos = getPhotos();
+  const entries = Object.entries(photos)
+    .filter(([k]) => k.startsWith(childId + ':'))
+    .map(([k, dataUrl]) => { const [, choreId, date] = k.split(':'); return { choreId, date, dataUrl }; })
+    .sort((a, b) => b.date.localeCompare(a.date));
+  if (!entries.length) return '';
+  const byDate = {};
+  entries.forEach(e => { (byDate[e.date] = byDate[e.date] || []).push(e); });
+  const rows = Object.entries(byDate).map(([date, items]) => `
+    <div style="margin-bottom:10px">
+      <div style="font-size:.78rem;color:var(--muted);margin-bottom:5px">${date}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px">
+        ${items.map(item => {
+          const ch = choreById(item.choreId);
+          return `<div style="text-align:center">
+            <img src="${item.dataUrl}" onclick="viewPhoto(this)" style="width:88px;height:88px;border-radius:10px;object-fit:cover;cursor:pointer" />
+            <div style="font-size:.7rem;color:var(--muted);margin-top:3px">${ch ? esc(ch.name) : '家事'}</div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`).join('');
+  return `<div class="section-title">📷 家事照片（近 7 天，本機）</div><div class="card">${rows}</div>`;
+}
+function viewPhoto(img) {
+  modal(`<div style="text-align:center">
+    <img src="${img.src}" style="max-width:100%;max-height:70vh;border-radius:12px;object-fit:contain" />
+    <div class="gap8"></div>
+    <button class="btn block ghost" onclick="this.closest('.modal-mask').remove()">關閉</button>
+  </div>`);
 }
 
 /* ===========================================================
