@@ -52,6 +52,7 @@ function blankChildData() {
       night:   { ...D.DEFAULT_FLOWS.night,   steps: D.DEFAULT_FLOWS.night.steps.map(s=>({id:uid(),text:s})), checked:{}, date:'' },
     })),
     chores: { date:'', drawn:[], manual:[], doneIds:[] },
+    chorePhotos: {},        // choreId:date → R2 URL（永久累積，可跨裝置同步）
     status: {},               // status[date] = {spirit, mood, ...}
     redeemLog: [],            // 兌換紀錄 [{name, cost, date}]
     awarded: { date:'', keys:[] }, // 今日已領星星的任務，防止重複領
@@ -236,6 +237,7 @@ function cdata() {
   if (!state.data[id].awarded) state.data[id].awarded = { date:'', keys:[] };
   if (!Array.isArray(state.data[id].activeDays)) state.data[id].activeDays = [];
   if (!Array.isArray(state.data[id].chores.manual)) state.data[id].chores.manual = [];
+  if (typeof state.data[id].chorePhotos !== 'object' || Array.isArray(state.data[id].chorePhotos)) state.data[id].chorePhotos = {};
   return state.data[id];
 }
 function addStars(n, ev) {
@@ -1688,26 +1690,12 @@ function finishFlow(ev) {
    =========================================================== */
 let spinning = false;
 
-/* ---- 照片紀錄（本地 localStorage，不同步雲端） ---- */
-const PHOTO_KEY = 'pi_hai_photos';
-function getPhotos() {
-  try { return JSON.parse(localStorage.getItem(PHOTO_KEY) || '{}'); } catch { return {}; }
-}
-function savePhotos(p) { try { localStorage.setItem(PHOTO_KEY, JSON.stringify(p)); } catch {} }
-function photoKey(childId, choreId) { return `${childId}:${choreId}:${todayStr()}`; }
-function getChorePhoto(childId, choreId) { return getPhotos()[photoKey(childId, choreId)] || null; }
-function setChorePhoto(childId, choreId, dataUrl) {
-  const p = getPhotos(); p[photoKey(childId, choreId)] = dataUrl; savePhotos(p);
-}
-function removeChorePhoto(childId, choreId) {
-  const p = getPhotos(); delete p[photoKey(childId, choreId)]; savePhotos(p);
-}
-function cleanupOldPhotos() {
-  const keep = new Set();
-  for (let i = 0; i < 7; i++) { const d = new Date(); d.setDate(d.getDate() - i); keep.add(dateStr(d)); }
-  const p = getPhotos(); let changed = false;
-  Object.keys(p).forEach(k => { const date = k.split(':')[2]; if (!keep.has(date)) { delete p[k]; changed = true; } });
-  if (changed) savePhotos(p);
+/* ---- 照片紀錄（Cloudflare R2，跨裝置、永久保存） ---- */
+function photoStateKey(choreId, date) { return `${choreId}:${date}`; }
+function getChorePhoto(childId, choreId) {
+  const cd = state.data[childId];
+  if (!cd || !cd.chorePhotos) return null;
+  return cd.chorePhotos[photoStateKey(choreId, todayStr())] || null;
 }
 function resizeImage(file) {
   return new Promise((resolve, reject) => {
@@ -1727,20 +1715,50 @@ function resizeImage(file) {
     img.src = url;
   });
 }
+async function uploadPhotoToR2(choreId, dataUrl) {
+  const proxyUrl = getProxy();
+  if (!proxyUrl) { toast('請先設定 AI 服務網址才能上傳照片'); return null; }
+  const childId = state.activeChild;
+  const date = todayStr();
+  const r2Key = `${childId}/${choreId}/${date}`;
+  const base64 = dataUrl.split(',')[1];
+  try {
+    const res = await fetch(`${proxyUrl}/photo/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: r2Key, data: base64 }),
+    });
+    if (!res.ok) { toast('照片上傳失敗（' + res.status + '）'); return null; }
+    return `${proxyUrl}/photo/${r2Key}`;
+  } catch { toast('照片上傳失敗，請確認網路連線'); return null; }
+}
 function handleChorePhoto(choreId) {
   const inp = document.createElement('input');
-  inp.type = 'file'; inp.accept = 'image/*';
+  inp.type = 'file'; inp.accept = 'image/*'; inp.capture = 'environment';
   inp.onchange = async () => {
     const file = inp.files[0]; if (!file) return;
     try {
+      toast('壓縮中…');
       const dataUrl = await resizeImage(file);
-      setChorePhoto(state.activeChild, choreId, dataUrl);
-      renderChores();
+      toast('上傳中…');
+      const photoUrl = await uploadPhotoToR2(choreId, dataUrl);
+      if (photoUrl) {
+        const cd = cdata();
+        cd.chorePhotos[photoStateKey(choreId, todayStr())] = photoUrl;
+        save();
+        toast('照片已上傳 ✓');
+        renderChores();
+      }
     } catch { toast('照片處理失敗，請重試'); }
   };
   inp.click();
 }
-function removeChorePhotoUI(choreId) { removeChorePhoto(state.activeChild, choreId); renderChores(); }
+function removeChorePhotoUI(choreId) {
+  const cd = cdata();
+  delete cd.chorePhotos[photoStateKey(choreId, todayStr())];
+  save(); renderChores();
+}
+function cleanupOldPhotos() {} // 照片永久保存於 R2，不需本機清理
 
 /* ---- 家長手動指派 ---- */
 function assignChore(id) {
@@ -2147,10 +2165,11 @@ function renderRecords() {
   `;
 }
 function buildChorePhotoSection(childId) {
-  const photos = getPhotos();
-  const entries = Object.entries(photos)
-    .filter(([k]) => k.startsWith(childId + ':'))
-    .map(([k, dataUrl]) => { const [, choreId, date] = k.split(':'); return { choreId, date, dataUrl }; })
+  const cd = state.data[childId];
+  if (!cd || !cd.chorePhotos) return '';
+  const entries = Object.entries(cd.chorePhotos)
+    .map(([k, url]) => { const [choreId, date] = k.split(':'); return { choreId, date, url }; })
+    .filter(e => e.choreId && e.date && e.url)
     .sort((a, b) => b.date.localeCompare(a.date));
   if (!entries.length) return '';
   const byDate = {};
@@ -2162,13 +2181,13 @@ function buildChorePhotoSection(childId) {
         ${items.map(item => {
           const ch = choreById(item.choreId);
           return `<div style="text-align:center">
-            <img src="${item.dataUrl}" onclick="viewPhoto(this)" style="width:88px;height:88px;border-radius:10px;object-fit:cover;cursor:pointer" />
+            <img src="${item.url}" onclick="viewPhoto(this)" style="width:88px;height:88px;border-radius:10px;object-fit:cover;cursor:pointer" />
             <div style="font-size:.7rem;color:var(--muted);margin-top:3px">${ch ? esc(ch.name) : '家事'}</div>
           </div>`;
         }).join('')}
       </div>
     </div>`).join('');
-  return `<div class="section-title">📷 家事照片（近 7 天，本機）</div><div class="card">${rows}</div>`;
+  return `<div class="section-title">📷 家事照片（R2 雲端，跨裝置）</div><div class="card">${rows}</div>`;
 }
 function viewPhoto(img) {
   modal(`<div style="text-align:center">
@@ -2360,7 +2379,6 @@ render();
 autoSyncPull();        // 開啟 App 自動拉雲端最新
 lockConnect();         // 連上即時編輯鎖
 scheduleNotifications(); // 重新排程今日提醒（每次開 App 都呼叫）
-cleanupOldPhotos();      // 清理昨日以前的照片快取
 
 // PWA 從背景回到前景時也檢查一次（至少間隔 20 秒，避免頻繁）
 let lastAutoPull = Date.now();

@@ -165,6 +165,17 @@ export default {
         return json({ app: '出發了', items }, 200, getCors);
       }
 
+      // ---- 照片取得（R2 → 瀏覽器）----
+      if (gPath.startsWith('/photo/')) {
+        if (!env.PHOTOS) return new Response('R2 未綁定', { status: 500 });
+        const key = decodeURIComponent(gPath.slice(7));
+        const obj = await env.PHOTOS.get(key);
+        if (!obj) return new Response('not found', { status: 404 });
+        return new Response(obj.body, {
+          headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=31536000', ...getCors },
+        });
+      }
+
       return json({ error: 'not found' }, 404, getCors);
     }
 
@@ -205,6 +216,18 @@ export default {
       const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' });
       const payload = { date: today, items: body2.items || [], summary: body2.summary || '' };
       await env.SYNC.put('ex:' + code, JSON.stringify(payload), { expirationTtl: 86400 * 3 });
+      return json({ ok: true }, 200, cors);
+    }
+
+    // ---- 照片上傳（App → R2，永久保存不刪除）----
+    if (request.method === 'POST' && url.pathname === '/photo/upload') {
+      if (!originOk) return json({ error: 'forbidden' }, 403, cors);
+      if (!env.PHOTOS) return json({ error: 'R2 未綁定' }, 500, cors);
+      let pb; try { pb = await request.json(); } catch { return json({ error: 'bad json' }, 400, cors); }
+      const { key, data } = pb;
+      if (!key || !data) return json({ error: 'key 和 data 必填' }, 400, cors);
+      const binary = Uint8Array.from(atob(data), c => c.charCodeAt(0));
+      await env.PHOTOS.put(key, binary, { httpMetadata: { contentType: 'image/jpeg' } });
       return json({ ok: true }, 200, cors);
     }
 
