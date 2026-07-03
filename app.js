@@ -986,7 +986,8 @@ function resetProgress() {
     (d.levels || []).forEach(l => l.done = false);
     d.levelAwarded = [];
     if (d.flows) ['morning', 'night'].forEach(k => { if (d.flows[k]) { d.flows[k].checked = {}; d.flows[k]._rewarded = ''; d.flows[k].date = ''; } });
-    d.chores = { date: '', drawn: [], doneIds: [] };
+    d.chores = { date: '', drawn: [], manual: [], doneIds: [] };
+    d.chorePhotos = {};
     d.status = {};
     d.redeemLog = [];
     d.awarded = { date: '', keys: [] };
@@ -1786,7 +1787,7 @@ function removeTodayChore(id) {
   cd.chores.drawn  = (cd.chores.drawn  || []).filter(i => i !== id);
   cd.chores.manual = (cd.chores.manual || []).filter(i => i !== id);
   cd.chores.doneIds = (cd.chores.doneIds || []).filter(i => i !== id);
-  removeChorePhoto(state.activeChild, id);
+  delete cd.chorePhotos[photoStateKey(id, todayStr())];
   save(); renderChores();
 }
 function renderChores() {
