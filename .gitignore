@@ -1,6 +1,9 @@
 .claude/
 node_modules/
 *.log
+.env
+.env.*
+*.secret
 
 _*.mjs
 _*.json
