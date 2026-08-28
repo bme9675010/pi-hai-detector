@@ -115,6 +115,28 @@ function pickNow(loc, elName) {
   return pick.ElementValue && pick.ElementValue[0];
 }
 
+/* 家事照片逐張合併（來自 worker/worker.js mergePhotos） */
+function mergePhotos(aData, bData) {
+  if (!aData && !bData) return null;
+  const tOf = v => (v && typeof v === 'object' && v.t) || 0;
+  const keep = {};
+  for (const src of [aData, bData]) {
+    const m = (src && src.chorePhotos) || {};
+    for (const k in m) {
+      if (!(k in keep) || tOf(m[k]) >= tOf(keep[k])) keep[k] = m[k];
+    }
+  }
+  const del = {};
+  for (const src of [aData, bData]) {
+    const m = (src && src.chorePhotosDel) || {};
+    for (const k in m) del[k] = Math.max(del[k] || 0, m[k] || 0);
+  }
+  for (const k in del) {
+    if (k in keep && del[k] > tOf(keep[k])) delete keep[k];
+  }
+  return { keep, del };
+}
+
 /* 雲端合併邏輯（來自 worker/worker.js /sync/merge 路由） */
 function mergeCloudDoc(stored, inc) {
   if (!stored.children) stored.children = {};
@@ -123,8 +145,11 @@ function mergeCloudDoc(stored, inc) {
 
   const inC = inc.children || {};
   for (const cid in inC) {
-    if (!stored.children[cid] || (inC[cid].t || 0) >= (stored.children[cid].t || 0))
-      stored.children[cid] = inC[cid];
+    const mine = inC[cid], theirs = stored.children[cid];
+    const photos = mergePhotos(theirs && theirs.data, mine && mine.data);
+    if (!theirs || (mine.t || 0) >= (theirs.t || 0)) stored.children[cid] = mine;
+    const win = stored.children[cid];
+    if (win && win.data && photos) { win.data.chorePhotos = photos.keep; win.data.chorePhotosDel = photos.del; }
   }
   if (inc.shared && (inc.shared.t || 0) > (stored.shared.t || 0))
     stored.shared = inc.shared;
@@ -443,5 +468,111 @@ describe('mergeCloudDoc（雲端合併）', () => {
     const stored = { ...fresh(), children:{ c1:{ t:100, stars:5 } } };
     const result = mergeCloudDoc(stored, { children:{}, shared:{ t:0 }, deleted:{} });
     assert.equal(result.children.c1.stars, 5);
+  });
+});
+
+/* ---------- mergePhotos（家事照片跨裝置合併） ---------- */
+describe('mergePhotos（家事照片合併）', () => {
+  const P = (url, t) => ({ url, t });
+
+  test('兩台裝置各拍不同家事 → 兩張都保留', () => {
+    const mom = { chorePhotos: { 'c1:2026-08-28': P('u1', 100) } };
+    const dad = { chorePhotos: { 'c2:2026-08-28': P('u2', 200) } };
+    const r = mergePhotos(mom, dad);
+    assert.equal(r.keep['c1:2026-08-28'].url, 'u1');
+    assert.equal(r.keep['c2:2026-08-28'].url, 'u2');
+  });
+
+  test('時間戳較舊的那台不會洗掉對方的照片（原始 bug）', () => {
+    // 媽媽先拍(t=100)，爸爸後拍(t=200)但沒先拉資料 → 合併後兩張都要在
+    const cloud = { children: { kid: { t: 100, data: { chorePhotos: { 'c1:2026-08-28': P('mom', 100) } } } },
+                    shared: { t: 0 }, deleted: {} };
+    const inc   = { children: { kid: { t: 200, data: { chorePhotos: { 'c2:2026-08-28': P('dad', 200) } } } },
+                    shared: { t: 0 }, deleted: {} };
+    const r = mergeCloudDoc(cloud, inc);
+    const photos = r.children.kid.data.chorePhotos;
+    assert.equal(photos['c1:2026-08-28'].url, 'mom', '媽媽的照片不該消失');
+    assert.equal(photos['c2:2026-08-28'].url, 'dad');
+  });
+
+  test('同一張照片重拍 → 較新的勝出', () => {
+    const a = { chorePhotos: { 'c1:2026-08-28': P('old', 100) } };
+    const b = { chorePhotos: { 'c1:2026-08-28': P('new', 300) } };
+    assert.equal(mergePhotos(a, b).keep['c1:2026-08-28'].url, 'new');
+    assert.equal(mergePhotos(b, a).keep['c1:2026-08-28'].url, 'new', '合併順序不影響結果');
+  });
+
+  test('刪除墓碑比照片新 → 該張被移除', () => {
+    const a = { chorePhotos: { 'c1:2026-08-28': P('u1', 100) } };
+    const b = { chorePhotosDel: { 'c1:2026-08-28': 200 } };
+    assert.equal(mergePhotos(a, b).keep['c1:2026-08-28'], undefined);
+  });
+
+  test('刪除後重拍 → 照片復活（照片比墓碑新）', () => {
+    const a = { chorePhotos: { 'c1:2026-08-28': P('retake', 300) } };
+    const b = { chorePhotosDel: { 'c1:2026-08-28': 200 } };
+    assert.equal(mergePhotos(a, b).keep['c1:2026-08-28'].url, 'retake');
+  });
+
+  test('墓碑取兩邊最大值', () => {
+    const a = { chorePhotosDel: { 'c1:2026-08-28': 100 } };
+    const b = { chorePhotosDel: { 'c1:2026-08-28': 500 } };
+    assert.equal(mergePhotos(a, b).del['c1:2026-08-28'], 500);
+  });
+
+  test('相容舊格式（純字串 URL，視為 t=0）', () => {
+    const a = { chorePhotos: { 'c1:2026-08-28': 'legacy-url' } };
+    const b = { chorePhotos: { 'c2:2026-08-28': P('new', 100) } };
+    const r = mergePhotos(a, b);
+    assert.equal(r.keep['c1:2026-08-28'], 'legacy-url');
+    assert.equal(r.keep['c2:2026-08-28'].url, 'new');
+  });
+
+  test('舊格式字串會被有時間戳的新照片取代', () => {
+    const a = { chorePhotos: { 'c1:2026-08-28': 'legacy' } };
+    const b = { chorePhotos: { 'c1:2026-08-28': P('fresh', 1) } };
+    assert.equal(mergePhotos(a, b).keep['c1:2026-08-28'].url, 'fresh');
+  });
+
+  test('兩邊皆空 → null', () => {
+    assert.equal(mergePhotos(null, null), null);
+  });
+
+  test('單邊有資料也能合併', () => {
+    const r = mergePhotos(null, { chorePhotos: { 'c1:2026-08-28': P('only', 1) } });
+    assert.equal(r.keep['c1:2026-08-28'].url, 'only');
+  });
+});
+
+/* ---------- 照片上傳 key 驗證（來自 worker /photo/upload） ---------- */
+describe('照片 key 格式驗證', () => {
+  const ok = k => /^[A-Za-z0-9_-]{1,40}\/[A-Za-z0-9_-]{1,40}\/\d{4}-\d{2}-\d{2}$/.test(k);
+
+  test('正常的 childId/choreId/日期 通過', () => {
+    assert.ok(ok('abc1234/d0/2026-08-28'));
+    assert.ok(ok('x7y8z9a/kf83jd2/2026-12-31'));
+  });
+  test('內建家事 id（d0、d12）通過', () => {
+    assert.ok(ok('abc1234/d12/2026-08-28'));
+  });
+  test('路徑穿越被擋下', () => {
+    assert.ok(!ok('../../etc/passwd'));
+    assert.ok(!ok('a/../b/2026-08-28'));
+  });
+  test('多餘的路徑層級被擋下', () => {
+    assert.ok(!ok('a/b/c/2026-08-28'));
+    assert.ok(!ok('a/2026-08-28'));
+  });
+  test('日期格式錯誤被擋下', () => {
+    assert.ok(!ok('abc/d0/2026-8-28'));
+    assert.ok(!ok('abc/d0/not-a-date'));
+    assert.ok(!ok('abc/d0/'));
+  });
+  test('超長 id 被擋下', () => {
+    assert.ok(!ok('a'.repeat(41) + '/d0/2026-08-28'));
+  });
+  test('特殊字元被擋下', () => {
+    assert.ok(!ok('abc$/d0/2026-08-28'));
+    assert.ok(!ok('abc/d 0/2026-08-28'));
   });
 });

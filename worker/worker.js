@@ -225,8 +225,22 @@ export default {
       if (!env.PHOTOS) return json({ error: 'R2 未綁定' }, 500, cors);
       let pb; try { pb = await request.json(); } catch { return json({ error: 'bad json' }, 400, cors); }
       const { key, data } = pb;
-      if (!key || !data) return json({ error: 'key 和 data 必填' }, 400, cors);
-      const binary = Uint8Array.from(atob(data), c => c.charCodeAt(0));
+      if (typeof key !== 'string' || typeof data !== 'string' || !key || !data) {
+        return json({ error: 'key 和 data 必填' }, 400, cors);
+      }
+      // key 只允許 `childId/choreId/YYYY-MM-DD`，擋掉任意路徑覆寫
+      if (!/^[A-Za-z0-9_-]{1,40}\/[A-Za-z0-9_-]{1,40}\/\d{4}-\d{2}-\d{2}$/.test(key)) {
+        return json({ error: 'bad key' }, 400, cors);
+      }
+      // 大小上限 1MB（前端壓到 480px JPEG 約 30–80KB，這裡留很大餘裕）
+      if (data.length > 1_400_000) return json({ error: '照片過大' }, 413, cors);
+      let binary;
+      try { binary = Uint8Array.from(atob(data), c => c.charCodeAt(0)); }
+      catch { return json({ error: 'bad base64' }, 400, cors); }
+      // 檢查 JPEG magic bytes，確保存進去的真的是圖片
+      if (binary.length < 3 || binary[0] !== 0xFF || binary[1] !== 0xD8 || binary[2] !== 0xFF) {
+        return json({ error: '只接受 JPEG' }, 400, cors);
+      }
       await env.PHOTOS.put(key, binary, { httpMetadata: { contentType: 'image/jpeg' } });
       return json({ ok: true }, 200, cors);
     }
@@ -267,10 +281,15 @@ export default {
       if (!stored.shared) stored.shared = { rewards: [], customChores: [], customActions: [], t: 0 };
       if (!stored.deleted) stored.deleted = {};
       const inc = body.doc || {};
-      // 每個小孩：誰的時間戳新就用誰的
+      // 每個小孩：誰的時間戳新就用誰的（但家事照片改「逐張聯集」，見下）
       const inC = inc.children || {};
       for (const cid in inC) {
-        if (!stored.children[cid] || (inC[cid].t || 0) >= (stored.children[cid].t || 0)) stored.children[cid] = inC[cid];
+        const mine = inC[cid], theirs = stored.children[cid];
+        // 家事照片是純累加資料：兩邊聯集，避免時間戳輸的那台把對方的照片洗掉
+        const photos = mergePhotos(theirs && theirs.data, mine && mine.data);
+        if (!theirs || (mine.t || 0) >= (theirs.t || 0)) stored.children[cid] = mine;
+        const win = stored.children[cid];
+        if (win && win.data && photos) { win.data.chorePhotos = photos.keep; win.data.chorePhotosDel = photos.del; }
       }
       // 共用設定（獎勵/自訂內容）：較新者勝
       if (inc.shared && (inc.shared.t || 0) > (stored.shared.t || 0)) stored.shared = inc.shared;
@@ -346,6 +365,30 @@ export default {
     return json({ items, provider }, 200, cors);
   }
 };
+
+/* 家事照片逐張合併：兩邊聯集，同一張以較新的時間戳為準；刪除墓碑較新則移除該張。
+   照片值相容舊格式（純字串 URL，視為 t=0）。 */
+function mergePhotos(aData, bData) {
+  if (!aData && !bData) return null;
+  const tOf = v => (v && typeof v === 'object' && v.t) || 0;
+  const keep = {};
+  for (const src of [aData, bData]) {
+    const m = (src && src.chorePhotos) || {};
+    for (const k in m) {
+      if (!(k in keep) || tOf(m[k]) >= tOf(keep[k])) keep[k] = m[k];
+    }
+  }
+  const del = {};
+  for (const src of [aData, bData]) {
+    const m = (src && src.chorePhotosDel) || {};
+    for (const k in m) del[k] = Math.max(del[k] || 0, m[k] || 0);
+  }
+  // 墓碑比照片新 → 這張確實被刪了
+  for (const k in del) {
+    if (k in keep && del[k] > tOf(keep[k])) delete keep[k];
+  }
+  return { keep, del };
+}
 
 function json(obj, status, cors) {
   return new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json', ...cors } });

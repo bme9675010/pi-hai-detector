@@ -52,7 +52,8 @@ function blankChildData() {
       night:   { ...D.DEFAULT_FLOWS.night,   steps: D.DEFAULT_FLOWS.night.steps.map(s=>({id:uid(),text:s})), checked:{}, date:'' },
     })),
     chores: { date:'', drawn:[], manual:[], doneIds:[] },
-    chorePhotos: {},        // choreId:date → R2 URL（永久累積，可跨裝置同步）
+    chorePhotos: {},        // choreId:date → { url, t }（跨裝置聯集合併）
+    chorePhotosDel: {},     // choreId:date → t（刪除墓碑，讓刪除也能跨裝置傳播）
     status: {},               // status[date] = {spirit, mood, ...}
     redeemLog: [],            // 兌換紀錄 [{name, cost, date}]
     awarded: { date:'', keys:[] }, // 今日已領星星的任務，防止重複領
@@ -237,7 +238,10 @@ function cdata() {
   if (!state.data[id].awarded) state.data[id].awarded = { date:'', keys:[] };
   if (!Array.isArray(state.data[id].activeDays)) state.data[id].activeDays = [];
   if (!Array.isArray(state.data[id].chores.manual)) state.data[id].chores.manual = [];
-  if (typeof state.data[id].chorePhotos !== 'object' || Array.isArray(state.data[id].chorePhotos)) state.data[id].chorePhotos = {};
+  const _cp = state.data[id].chorePhotos;
+  if (typeof _cp !== 'object' || _cp === null || Array.isArray(_cp)) state.data[id].chorePhotos = {};
+  const _cpd = state.data[id].chorePhotosDel;
+  if (typeof _cpd !== 'object' || _cpd === null || Array.isArray(_cpd)) state.data[id].chorePhotosDel = {};
   return state.data[id];
 }
 function addStars(n, ev) {
@@ -988,6 +992,7 @@ function resetProgress() {
     if (d.flows) ['morning', 'night'].forEach(k => { if (d.flows[k]) { d.flows[k].checked = {}; d.flows[k]._rewarded = ''; d.flows[k].date = ''; } });
     d.chores = { date: '', drawn: [], manual: [], doneIds: [] };
     d.chorePhotos = {};
+    d.chorePhotosDel = {};
     d.status = {};
     d.redeemLog = [];
     d.awarded = { date: '', keys: [] };
@@ -1693,10 +1698,12 @@ let spinning = false;
 
 /* ---- 照片紀錄（Cloudflare R2，跨裝置、永久保存） ---- */
 function photoStateKey(choreId, date) { return `${choreId}:${date}`; }
+// 照片值相容兩種格式：舊版純字串 URL、新版 { url, t }
+function photoUrlOf(v) { return typeof v === 'string' ? v : (v && v.url) || null; }
 function getChorePhoto(childId, choreId) {
   const cd = state.data[childId];
   if (!cd || !cd.chorePhotos) return null;
-  return cd.chorePhotos[photoStateKey(choreId, todayStr())] || null;
+  return photoUrlOf(cd.chorePhotos[photoStateKey(choreId, todayStr())]);
 }
 function resizeImage(file) {
   return new Promise((resolve, reject) => {
@@ -1745,7 +1752,9 @@ function handleChorePhoto(choreId) {
       const photoUrl = await uploadPhotoToR2(choreId, dataUrl);
       if (photoUrl) {
         const cd = cdata();
-        cd.chorePhotos[photoStateKey(choreId, todayStr())] = photoUrl;
+        const pk = photoStateKey(choreId, todayStr());
+        cd.chorePhotos[pk] = { url: photoUrl, t: Date.now() };
+        delete cd.chorePhotosDel[pk];   // 重新拍照 → 清掉舊的刪除墓碑
         save();
         toast('照片已上傳 ✓');
         renderChores();
@@ -1756,7 +1765,9 @@ function handleChorePhoto(choreId) {
 }
 function removeChorePhotoUI(choreId) {
   const cd = cdata();
-  delete cd.chorePhotos[photoStateKey(choreId, todayStr())];
+  const pk = photoStateKey(choreId, todayStr());
+  delete cd.chorePhotos[pk];
+  cd.chorePhotosDel[pk] = Date.now();   // 墓碑：讓其他裝置同步後也移除
   save(); renderChores();
 }
 function cleanupOldPhotos() {} // 照片永久保存於 R2，不需本機清理
@@ -1787,7 +1798,9 @@ function removeTodayChore(id) {
   cd.chores.drawn  = (cd.chores.drawn  || []).filter(i => i !== id);
   cd.chores.manual = (cd.chores.manual || []).filter(i => i !== id);
   cd.chores.doneIds = (cd.chores.doneIds || []).filter(i => i !== id);
-  delete cd.chorePhotos[photoStateKey(id, todayStr())];
+  const pk = photoStateKey(id, todayStr());
+  delete cd.chorePhotos[pk];
+  cd.chorePhotosDel[pk] = Date.now();
   save(); renderChores();
 }
 function renderChores() {
@@ -2169,7 +2182,7 @@ function buildChorePhotoSection(childId) {
   const cd = state.data[childId];
   if (!cd || !cd.chorePhotos) return '';
   const entries = Object.entries(cd.chorePhotos)
-    .map(([k, url]) => { const [choreId, date] = k.split(':'); return { choreId, date, url }; })
+    .map(([k, v]) => { const [choreId, date] = k.split(':'); return { choreId, date, url: photoUrlOf(v) }; })
     .filter(e => e.choreId && e.date && e.url)
     .sort((a, b) => b.date.localeCompare(a.date));
   if (!entries.length) return '';

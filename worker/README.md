@@ -73,6 +73,30 @@ wrangler deploy
    另一台裝置輸入同一組同步碼按「從雲端下載」即可。
    ⚠️ 同步碼等於密碼，設長一點、不要外流。
 
+## 家事照片儲存（Cloudflare R2）
+
+家事任務可以拍照留紀錄，照片存在 R2（永久保存、跨裝置看得到）。
+
+1. 先到 Cloudflare Dashboard → R2 啟用服務（免費方案 10GB／月，需綁卡但不扣款）。
+2. 建立 bucket：
+   ```
+   wrangler r2 bucket create pi-hai-photos
+   ```
+3. 重新部署：
+   ```
+   wrangler deploy
+   ```
+
+部署後 `wrangler deploy` 的輸出應該會列出 `env.PHOTOS (pi-hai-photos)` → `R2 Bucket`。
+
+端點：
+- `POST /photo/upload`｜body `{ key, data }`，`data` 是 JPEG 的 base64。
+  只接受 `childId/choreId/YYYY-MM-DD` 格式的 key、上限 1MB、且會驗 JPEG magic bytes。
+- `GET /photo/<key>`｜回傳圖片，快取一年。
+
+照片本身不會自動刪除。App 裡按「移除」只是把該張從紀錄拿掉（會留刪除墓碑同步到其他裝置），
+R2 上的檔案仍在，要真的清掉請用 `wrangler r2 object delete`。
+
 ## 定時喚醒（Cron，避免冷啟動）
 
 `wrangler.toml` 的 `[triggers]` 設了 `crons = ["*/10 * * * *"]`，
