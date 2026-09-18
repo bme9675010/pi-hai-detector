@@ -52,6 +52,8 @@ function blankChildData() {
       night:   { ...D.DEFAULT_FLOWS.night,   steps: D.DEFAULT_FLOWS.night.steps.map(s=>({id:uid(),text:s})), checked:{}, date:'' },
     })),
     chores: { date:'', drawn:[], manual:[], doneIds:[] },
+    study: { date:'', doneIds:[] },   // 今日學習任務完成狀態（跨日重置）
+    studyTasks: null,                 // 學習題庫（逐小孩，首次進入依年齡帶入預設）
     chorePhotos: {},        // choreId:date → { url, t }（跨裝置聯集合併）
     chorePhotosDel: {},     // choreId:date → t（刪除墓碑，讓刪除也能跨裝置傳播）
     status: {},               // status[date] = {spirit, mood, ...}
@@ -86,6 +88,22 @@ function ensureChoreLib() {
   return state.customChores;
 }
 function allChores() { return ensureChoreLib(); }
+
+/* 學習題庫：逐小孩，首次進入依該小孩年齡帶入預設（之後可自由增刪） */
+function ensureStudyLib(childId) {
+  const cd = state.data[childId];
+  if (!cd) return [];
+  if (Array.isArray(cd.studyTasks)) return cd.studyTasks;
+  const prof = state.children.find(c => c.id === childId);
+  const age = (prof && prof.age) || '7-9';
+  cd.studyTasks = (D.DEFAULT_STUDY || [])
+    .filter(t => !t.ages || t.ages.includes(age))
+    .map(t => ({ id: uid(), name: t.name, desc: t.desc, emoji: t.emoji, stars: t.stars,
+                 repeat: t.repeat, days: t.days ? t.days.slice() : [], due: t.due || '' }));
+  // 種子化不是使用者編輯：直接存檔且不動 _t，避免新裝置同步時蓋掉別台已自訂的題庫
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {}
+  return cd.studyTasks;
+}
 function choreById(id) { return allChores().find(c => c.id === id); }
 // 依目前小孩年齡篩選適合的家事（年齡層相等或更小的）
 function choresForChild() {
@@ -242,6 +260,9 @@ function cdata() {
   if (typeof _cp !== 'object' || _cp === null || Array.isArray(_cp)) state.data[id].chorePhotos = {};
   const _cpd = state.data[id].chorePhotosDel;
   if (typeof _cpd !== 'object' || _cpd === null || Array.isArray(_cpd)) state.data[id].chorePhotosDel = {};
+  if (!state.data[id].study) state.data[id].study = { date:'', doneIds:[] };
+  if (!Array.isArray(state.data[id].study.doneIds)) state.data[id].study.doneIds = [];
+  ensureStudyLib(id);
   return state.data[id];
 }
 function addStars(n, ev) {
@@ -514,6 +535,7 @@ function renderHome() {
     { r:'levels',  ico:'🏆', lbl:'體能闖關',     bg:'linear-gradient(135deg,#4ECDC4,#5C7CFA)' },
     { r:'flows',   ico:'📋', lbl:'晨間/睡前流程', bg:'linear-gradient(135deg,#A66CFF,#FF6FB5)' },
     { r:'chores',  ico:'🎡', lbl:'家事任務輪盤', bg:'linear-gradient(135deg,#6BCB77,#4ECDC4)' },
+    { r:'study',   ico:'📚', lbl:'學習任務',     bg:'linear-gradient(135deg,#5C7CFA,#A66CFF)' },
   ].map(m => `
     <button class="menu-card" style="background:${m.bg}" onclick="go('${m.r}')">
       <span class="ico">${m.ico}</span>
@@ -615,6 +637,12 @@ function cardStatus(r) {
   if (r === 'chores') {
     if (cd.chores.date === t && cd.chores.drawn.length) return `家事 ${cd.chores.doneIds.length}/${cd.chores.drawn.length}`;
     return '今天還沒抽';
+  }
+  if (r === 'study') {
+    const todays = studyTasksForToday(ensureStudyLib(state.activeChild), t);
+    if (!todays.length) return '今天沒有學習任務';
+    const done = (cd.study.date === t ? cd.study.doneIds : []).filter(id => todays.some(x => x.id === id)).length;
+    return `學習 ${done}/${todays.length}`;
   }
   if (r === 'status') return cd.status[t] ? '今天已記錄 ✓' : '今天還沒記錄';
   return '';
@@ -993,6 +1021,7 @@ function resetProgress() {
     d.chores = { date: '', drawn: [], manual: [], doneIds: [] };
     d.chorePhotos = {};
     d.chorePhotosDel = {};
+    d.study = { date: '', doneIds: [] };
     d.status = {};
     d.redeemLog = [];
     d.awarded = { date: '', keys: [] };
@@ -1992,6 +2021,278 @@ function saveChore(id) {
 }
 
 /* ===========================================================
+   模組 6：學習任務（每天 / 每週 / 單次截止日）
+   =========================================================== */
+// 今天該出現的學習任務：daily 每天都在、weekly 比對星期、once 未過期才顯示
+function studyTasksForToday(tasks, today) {
+  const dow = new Date(today + 'T00:00:00').getDay();
+  return (tasks || []).filter(t => {
+    if (t.repeat === 'weekly') return Array.isArray(t.days) && t.days.includes(dow);
+    if (t.repeat === 'once')   return !!t.due && t.due >= today;
+    return true;   // daily（含沒填 repeat 的舊資料）
+  });
+}
+// 距離某日期還有幾天（負數代表已過）
+function daysUntil(d) {
+  if (!d) return null;
+  const a = new Date(todayStr() + 'T00:00:00'), b = new Date(d + 'T00:00:00');
+  if (isNaN(b)) return null;
+  return Math.round((b - a) / 86400000);
+}
+function dueLabel(n) {
+  if (n === null) return '';
+  if (n < 0)   return '已過期';
+  if (n === 0) return '就是今天';
+  if (n === 1) return '明天';
+  return `還有 ${n} 天`;
+}
+function studyLib() { return ensureStudyLib(state.activeChild); }
+
+function renderStudy() {
+  const cd = cdata();
+  const today = todayStr();
+  if (cd.study.date !== today) { cd.study = { date: today, doneIds: [] }; save(); }
+
+  const lib = studyLib();
+  const todays = studyTasksForToday(lib, today);
+  const doneIds = cd.study.doneIds || [];
+  const doneN = todays.filter(t => doneIds.includes(t.id)).length;
+
+  // 倒數卡：所有未過期的單次任務，最近的排前面
+  const soon = lib.filter(t => t.repeat === 'once' && t.due && daysUntil(t.due) >= 0)
+                  .sort((a, b) => a.due.localeCompare(b.due));
+  const countdown = soon.length ? `
+    <div class="card" style="background:linear-gradient(135deg,#FFD93D,#FF9F45);color:#5a4500">
+      <strong>📅 接下來的重要日子</strong>
+      ${soon.slice(0, 4).map(t => {
+        const n = daysUntil(t.due);
+        return `<div class="row-between" style="margin-top:6px">
+          <span>${t.emoji || '📌'} ${esc(t.name)}</span>
+          <strong style="${n <= 2 ? 'color:#C62828' : ''}">${dueLabel(n)}</strong>
+        </div>`;
+      }).join('')}
+    </div>` : '';
+
+  const listHtml = todays.length ? todays.map(t => {
+    const done = doneIds.includes(t.id);
+    let badge = '';
+    if (t.repeat === 'weekly') {
+      badge = `<span class="study-badge">每週${(t.days || []).map(d => D.WEEKDAY_LABEL[d]).join('')}</span>`;
+    } else if (t.repeat === 'once') {
+      const n = daysUntil(t.due);
+      badge = `<span class="study-badge" style="color:${n <= 2 ? '#C62828' : 'var(--accent)'}">${dueLabel(n)}</span>`;
+    }
+    return `<div class="card task-item">
+      <span class="n" style="background:var(--bg)">${t.emoji || '📚'}</span>
+      <div class="body">
+        <div class="t">${esc(t.name)}${badge}</div>
+        ${t.desc ? `<div class="d">${esc(t.desc)}</div>` : ''}
+        <div class="task-meta"><span class="metric">⭐ ${t.stars} 顆</span></div>
+      </div>
+      <button class="check ${done ? 'done' : ''}" onclick="toggleStudy('${t.id}',event)">${done ? '✓' : ''}</button>
+    </div>`;
+  }).join('') : `<div class="empty"><div class="e">📚</div>今天沒有學習任務<br>可以到下面題庫新增</div>`;
+
+  // 題庫（全部，含今天沒輪到的）
+  const libHtml = lib.map(t => {
+    let when = D.STUDY_REPEAT_LABEL[t.repeat] || '每天';
+    if (t.repeat === 'weekly') when = '每週 ' + (t.days || []).map(d => D.WEEKDAY_LABEL[d]).join('、');
+    if (t.repeat === 'once')   when = t.due || '未設定日期';
+    return `<div class="card task-item">
+      <span class="n" style="background:var(--bg)">${t.emoji || '📚'}</span>
+      <div class="body"><div class="t">${esc(t.name)}</div>
+        <div class="d">${when} · ⭐${t.stars}</div></div>
+      <button class="btn ghost sm" onclick="editStudyTask('${t.id}')">✏️</button>
+      <button class="btn ghost sm" onclick="delStudyTask('${t.id}')">🗑️</button>
+    </div>`;
+  }).join('');
+
+  $app.innerHTML = `
+    ${topbar('學習任務')}
+    ${countdown}
+    <div class="section-title">📖 今天要做的學習任務</div>
+    <small class="hint" style="display:block;margin:-4px 4px 8px">
+      打勾 ✓ 完成可領星星${todays.length ? ` · 今天 ${doneN}/${todays.length}` : ''}
+    </small>
+    ${listHtml}
+
+    <div class="section-title">📋 學習題庫（${lib.length}）</div>
+    <small class="hint" style="display:block;margin:-4px 4px 8px">
+      「每週」的星期預設是常見安排，<b>請依實際課表調整</b>；<br>
+      考試或作業截止日請用「單次」，會在最上面倒數。
+    </small>
+    ${aiEnabled() ? `<button class="btn block purple" onclick="aiStudy(this)">🎲 AI 加新學習任務</button>` : ''}
+    ${libHtml}
+
+    <div class="section-title">新增學習任務</div>
+    <div class="card">
+      <div class="voice-field"><input type="text" id="st-name" placeholder="任務名稱，例如：背英文單字" maxlength="14" />${micBtn('st-name')}</div>
+      <div class="gap8"></div>
+      <input type="text" id="st-desc" placeholder="說明（選填）" maxlength="24" />
+      <div class="gap8"></div>
+      <div class="row-between">
+        <select id="st-repeat" class="choice" style="flex:1" onchange="syncStudyForm()">
+          <option value="daily">每天</option>
+          <option value="weekly">每週</option>
+          <option value="once">單次（考試／截止日）</option>
+        </select>
+        <input type="number" id="st-stars" placeholder="星星" min="1" max="5" value="1" style="width:80px" />
+      </div>
+      <div id="st-days-row" hidden>
+        <div class="field-label">星期幾</div>
+        <div class="chip-group" id="st-days">
+          ${D.WEEKDAY_LABEL.map((w, i) => `<button type="button" class="choice" data-d="${i}" onclick="this.classList.toggle('on')">${w}</button>`).join('')}
+        </div>
+      </div>
+      <div id="st-due-row" hidden>
+        <div class="field-label">日期</div>
+        <input type="date" id="st-due" />
+      </div>
+      <div class="gap8"></div>
+      <button class="btn block accent" onclick="addStudyTask()">＋ 新增</button>
+    </div>
+  `;
+  syncStudyForm();
+}
+// 依「重複方式」顯示對應欄位（星期 or 日期）
+function syncStudyForm() {
+  const v = document.getElementById('st-repeat')?.value;
+  const days = document.getElementById('st-days-row');
+  const due  = document.getElementById('st-due-row');
+  if (days) days.hidden = v !== 'weekly';
+  if (due)  due.hidden  = v !== 'once';
+}
+function syncStudyEditForm() {
+  const v = document.getElementById('es-repeat')?.value;
+  const days = document.getElementById('es-days-row');
+  const due  = document.getElementById('es-due-row');
+  if (days) days.hidden = v !== 'weekly';
+  if (due)  due.hidden  = v !== 'once';
+}
+function pickedDays(containerId) {
+  return [...document.querySelectorAll('#' + containerId + ' .choice.on')]
+    .map(b => parseInt(b.dataset.d, 10)).filter(n => !isNaN(n));
+}
+function toggleStudy(id, ev) {
+  if (blockedByLock()) return;
+  const cd = cdata();
+  const t = studyLib().find(x => x.id === id);
+  if (cd.study.doneIds.includes(id)) {
+    cd.study.doneIds = cd.study.doneIds.filter(i => i !== id);   // 取消打勾不退星
+  } else {
+    cd.study.doneIds.push(id);
+    const got = awardOnce('study:' + id, (t && t.stars) || 1, ev, `完成「${t ? t.name : '學習任務'}」！`);
+    if (!got) toast('這個任務今天已經領過星星囉 ⭐');
+  }
+  save(); renderStudy();
+}
+function addStudyTask() {
+  const name = (document.getElementById('st-name').value || '').trim();
+  if (!name) { alert('請輸入任務名稱'); return; }
+  const repeat = document.getElementById('st-repeat').value;
+  const days = repeat === 'weekly' ? pickedDays('st-days') : [];
+  const due  = repeat === 'once' ? (document.getElementById('st-due').value || '') : '';
+  if (repeat === 'weekly' && !days.length) { alert('請至少選一個星期'); return; }
+  if (repeat === 'once' && !due) { alert('請選一個日期'); return; }
+  studyLib().push({
+    id: uid(), name,
+    desc: (document.getElementById('st-desc').value || '').trim(),
+    emoji: '📚',
+    stars: Math.min(5, Math.max(1, parseInt(document.getElementById('st-stars').value, 10) || 1)),
+    repeat, days, due,
+  });
+  save(); renderStudy();
+  toast('已新增學習任務 ✓');
+}
+function editStudyTask(id) {
+  const t = studyLib().find(x => x.id === id);
+  if (!t) return;
+  modal(`
+    <h2>編輯學習任務</h2>
+    <div style="text-align:left">
+      <div class="field-label">名稱</div>
+      <input type="text" id="es-name" value="${esc(t.name)}" maxlength="14" />
+      <div class="field-label">說明</div>
+      <input type="text" id="es-desc" value="${esc(t.desc || '')}" maxlength="24" />
+      <div class="field-label">重複方式</div>
+      <select id="es-repeat" class="choice" style="width:100%" onchange="syncStudyEditForm()">
+        <option value="daily"  ${t.repeat === 'daily'  ? 'selected' : ''}>每天</option>
+        <option value="weekly" ${t.repeat === 'weekly' ? 'selected' : ''}>每週</option>
+        <option value="once"   ${t.repeat === 'once'   ? 'selected' : ''}>單次（考試／截止日）</option>
+      </select>
+      <div id="es-days-row" hidden>
+        <div class="field-label">星期幾</div>
+        <div class="chip-group" id="es-days">
+          ${D.WEEKDAY_LABEL.map((w, i) =>
+            `<button type="button" class="choice ${(t.days || []).includes(i) ? 'on' : ''}" data-d="${i}" onclick="this.classList.toggle('on')">${w}</button>`).join('')}
+        </div>
+      </div>
+      <div id="es-due-row" hidden>
+        <div class="field-label">日期</div>
+        <input type="date" id="es-due" value="${esc(t.due || '')}" />
+      </div>
+      <div class="field-label">星星數</div>
+      <input type="number" id="es-stars" value="${t.stars}" min="1" max="5" />
+    </div>
+    <div class="gap8"></div>
+    <button class="btn block green" onclick="saveStudyTask('${id}')">儲存</button>
+    <div class="gap8"></div>
+    <button class="btn block ghost" onclick="this.closest('.modal-mask').remove()">取消</button>
+  `);
+  syncStudyEditForm();
+}
+function saveStudyTask(id) {
+  const t = studyLib().find(x => x.id === id);
+  if (!t) return;
+  const name = (document.getElementById('es-name').value || '').trim();
+  if (!name) { alert('請輸入名稱'); return; }
+  const repeat = document.getElementById('es-repeat').value;
+  const days = repeat === 'weekly' ? pickedDays('es-days') : [];
+  const due  = repeat === 'once' ? (document.getElementById('es-due').value || '') : '';
+  if (repeat === 'weekly' && !days.length) { alert('請至少選一個星期'); return; }
+  if (repeat === 'once' && !due) { alert('請選一個日期'); return; }
+  t.name = name;
+  t.desc = (document.getElementById('es-desc').value || '').trim();
+  t.stars = Math.min(5, Math.max(1, parseInt(document.getElementById('es-stars').value, 10) || 1));
+  t.repeat = repeat; t.days = days; t.due = due;
+  save();
+  document.querySelector('.modal-mask')?.remove();
+  renderStudy();
+}
+function delStudyTask(id) {
+  if (!confirm('刪除這個學習任務？')) return;
+  const cd = cdata();
+  cd.studyTasks = studyLib().filter(t => t.id !== id);
+  cd.study.doneIds = (cd.study.doneIds || []).filter(i => i !== id);
+  save(); renderStudy();
+}
+async function aiStudy(btn) {
+  const items = await aiGenerate('study', { age: child().age, count: 3 }, btn);
+  if (!items) return;
+  const VALID = { daily: 1, weekly: 1, once: 1 };
+  items.forEach(it => {
+    const repeat = VALID[it.repeat] ? it.repeat : 'daily';
+    let days = [];
+    if (repeat === 'weekly') {
+      days = Array.isArray(it.days)
+        ? it.days.map(n => parseInt(n, 10)).filter(n => n >= 0 && n <= 6)
+        : [];
+      if (!days.length) days = [1];      // AI 沒給星期就預設週一，家長再調
+    }
+    studyLib().push({
+      id: uid(),
+      name: String(it.name || '學習任務').slice(0, 14),
+      desc: String(it.desc || ''),
+      emoji: String(it.emoji || '📚').slice(0, 2),
+      stars: Math.min(3, Math.max(1, parseInt(it.stars) || 1)),
+      repeat, days, due: '',
+    });
+  });
+  save(); renderStudy();
+  toast('🤖 AI 加了新學習任務！');
+}
+
+/* ===========================================================
    成就徽章
    =========================================================== */
 function getAchievements() {
@@ -2351,6 +2652,7 @@ const TABS = [
   { r:'levels', i:'🏆', l:'闖關' },
   { r:'flows',  i:'📋', l:'流程' },
   { r:'chores', i:'🎡', l:'家事' },
+  { r:'study',  i:'📚', l:'學習' },
   { r:'status', i:'📝', l:'狀態' },
 ];
 function renderTabbar() {
@@ -2374,6 +2676,7 @@ function render() {
     levels: renderLevels,
     flows: renderFlows,
     chores: renderChores,
+    study: renderStudy,
     status: renderStatus,
     rewards: renderRewards,
     history: renderHistory,

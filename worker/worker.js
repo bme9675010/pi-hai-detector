@@ -419,6 +419,14 @@ function buildPrompt(b) {
     return `幫家長想 ${n} 個適合${age}小孩的「集點獎勵」（以活動/特權/小確幸為主，少用花錢買的物質獎勵，要正向健康）。`
       + `回傳 JSON 陣列，每個物件欄位：name(獎勵名,12字內)、cost(建議所需星星數,5到30的整數)、emoji(一個相關emoji)。`;
   }
+  if (b.type === 'study') {
+    return `幫${age}的小孩設計 ${n} 個「學習習慣」任務（例如複習、閱讀、整理、帶東西上學這類，`
+      + `要具體、小孩自己做得到、不要出功課內容本身）。`
+      + `回傳 JSON 陣列，每個物件欄位：name(任務名,10字內)、desc(一句話說明)、`
+      + `stars(1到3的整數)、emoji(一個相關emoji)、`
+      + `repeat(只能是 daily 或 weekly)、days(僅當 repeat 是 weekly 時給，`
+      + `0到6的整數陣列代表星期幾，0是星期日)。`;
+  }
   if (b.type === 'flow') {
     const which = b.flow === 'night' ? '睡前' : '晨間';
     return `幫${age}的小孩設計 ${n} 個${which}流程的步驟（要簡短好懂）。`

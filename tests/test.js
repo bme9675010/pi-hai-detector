@@ -115,6 +115,23 @@ function pickNow(loc, elName) {
   return pick.ElementValue && pick.ElementValue[0];
 }
 
+/* 學習任務排程（來自 app.js 模組 6） */
+function studyTasksForToday(tasks, today) {
+  const dow = new Date(today + 'T00:00:00').getDay();
+  return (tasks || []).filter(t => {
+    if (t.repeat === 'weekly') return Array.isArray(t.days) && t.days.includes(dow);
+    if (t.repeat === 'once')   return !!t.due && t.due >= today;
+    return true;
+  });
+}
+function dueLabel(n) {
+  if (n === null) return '';
+  if (n < 0)   return '已過期';
+  if (n === 0) return '就是今天';
+  if (n === 1) return '明天';
+  return `還有 ${n} 天`;
+}
+
 /* 家事照片逐張合併（來自 worker/worker.js mergePhotos） */
 function mergePhotos(aData, bData) {
   if (!aData && !bData) return null;
@@ -574,5 +591,71 @@ describe('照片 key 格式驗證', () => {
   test('特殊字元被擋下', () => {
     assert.ok(!ok('abc$/d0/2026-08-28'));
     assert.ok(!ok('abc/d 0/2026-08-28'));
+  });
+});
+
+/* ---------- studyTasksForToday / daysUntil（學習任務週期） ---------- */
+describe('studyTasksForToday（學習任務排程）', () => {
+  // 2026-09-14 是星期一，2026-09-18 是星期五
+  const MON = '2026-09-14', TUE = '2026-09-15', FRI = '2026-09-18', SUN = '2026-09-20';
+  const daily  = { id:'a', repeat:'daily' };
+  const monWed = { id:'b', repeat:'weekly', days:[1,3] };
+  const friday = { id:'c', repeat:'weekly', days:[5] };
+  const exam   = { id:'d', repeat:'once', due:'2026-09-25' };
+  const all = [daily, monWed, friday, exam];
+  const ids = (tasks, day) => studyTasksForToday(tasks, day).map(t => t.id);
+
+  test('daily 每天都出現', () => {
+    [MON, TUE, FRI, SUN].forEach(d => assert.ok(ids(all, d).includes('a'), d));
+  });
+  test('weekly 只在指定星期出現', () => {
+    assert.ok(ids(all, MON).includes('b'), '週一該有');
+    assert.ok(!ids(all, TUE).includes('b'), '週二不該有');
+    assert.ok(ids(all, FRI).includes('c'), '週五該有');
+    assert.ok(!ids(all, MON).includes('c'), '週一不該有週五的');
+  });
+  test('星期日 = 0 的邊界正確', () => {
+    const sunTask = { id:'s', repeat:'weekly', days:[0] };
+    assert.deepEqual(ids([sunTask], SUN), ['s']);
+    assert.deepEqual(ids([sunTask], MON), []);
+  });
+  test('once 未到期會出現', () => {
+    assert.ok(ids(all, MON).includes('d'));
+  });
+  test('once 當天仍會出現', () => {
+    assert.ok(ids([exam], '2026-09-25').includes('d'));
+  });
+  test('once 過期後消失', () => {
+    assert.ok(!ids([exam], '2026-09-26').includes('d'));
+  });
+  test('once 沒填日期不出現', () => {
+    assert.deepEqual(ids([{ id:'x', repeat:'once', due:'' }], MON), []);
+  });
+  test('weekly 沒填星期不出現', () => {
+    assert.deepEqual(ids([{ id:'y', repeat:'weekly' }], MON), []);
+    assert.deepEqual(ids([{ id:'y', repeat:'weekly', days:[] }], MON), []);
+  });
+  test('沒填 repeat 的舊資料當成每天', () => {
+    assert.deepEqual(ids([{ id:'old' }], MON), ['old']);
+  });
+  test('空題庫回傳空陣列', () => {
+    assert.deepEqual(studyTasksForToday([], MON), []);
+    assert.deepEqual(studyTasksForToday(null, MON), []);
+  });
+  test('多個星期的任務在每一天都正確', () => {
+    const t = { id:'m', repeat:'weekly', days:[2,4] };   // 二、四
+    assert.deepEqual(ids([t], '2026-09-15'), ['m']);      // 二
+    assert.deepEqual(ids([t], '2026-09-16'), []);         // 三
+    assert.deepEqual(ids([t], '2026-09-17'), ['m']);      // 四
+  });
+});
+
+describe('dueLabel（倒數文字）', () => {
+  test('各種天數的說法', () => {
+    assert.equal(dueLabel(0), '就是今天');
+    assert.equal(dueLabel(1), '明天');
+    assert.equal(dueLabel(5), '還有 5 天');
+    assert.equal(dueLabel(-1), '已過期');
+    assert.equal(dueLabel(null), '');
   });
 });

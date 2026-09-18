@@ -348,3 +348,10 @@ input.listening,textarea.listening{outline:2px solid var(--primary);}
 .gap8{height:8px;}
 .gap16{height:16px;}
 small.hint{color:var(--muted);font-size:.8rem;}
+
+/* 學習任務：重複方式／倒數小標籤 */
+.study-badge{
+  display:inline-block;margin-left:5px;padding:1px 6px;
+  font-size:.66rem;font-weight:800;vertical-align:middle;
+  color:var(--accent);background:var(--bg);border-radius:8px;
+}

@@ -59,7 +59,7 @@ const LEVEL_TYPE_LABEL = {
 /* ---------- 模組 4：流程卡 ---------- */
 const DEFAULT_FLOWS = {
   morning: { title: "晨間流程", emoji: "🌅", steps: ["起床","刷牙洗臉","換衣服","吃早餐","帶水壺","背書包"] },
-  night:   { title: "睡前流程", emoji: "🌙", steps: ["收玩具","洗澡","刷牙","整理書包","看一本書","關燈"] },
+  night:   { title: "睡前流程", emoji: "🌙", steps: ["收玩具","洗澡","刷牙","看聯絡簿","整理書包","看一本書","關燈"] },
 };
 
 /* ---------- 模組 5：家事任務 ---------- */
@@ -80,7 +80,40 @@ const DEFAULT_CHORES = [
   { name: "餵寵物",           desc: "幫寵物加飼料或換水",         age: "7-9",   stars: 1, emoji: "🐶" },
   { name: "把曬乾的襪子配對", desc: "把襪子兩兩配成一雙",         age: "4-6",   stars: 1, emoji: "🧦" },
   { name: "擦自己的鞋子",     desc: "把鞋子擦乾淨",               age: "10-12", stars: 2, emoji: "👟" },
+  { name: "削鉛筆",           desc: "把鉛筆盒裡的筆都削好",       age: "7-9",   stars: 1, emoji: "✏️" },
+  { name: "整理書包夾層",     desc: "把舊考卷和垃圾清出來",       age: "7-9",   stars: 2, emoji: "🎒" },
+  { name: "整理考卷",         desc: "把考卷收進資料夾",           age: "10-12", stars: 2, emoji: "📑" },
+  { name: "準備明天的衣服",   desc: "把明天要穿的衣服放好",       age: "7-9",   stars: 1, emoji: "👔" },
+  { name: "擦自己的書桌",     desc: "用抹布把書桌擦乾淨",         age: "4-6",   stars: 1, emoji: "🪑" },
 ];
+
+/* ---------- 模組 6：學習任務 ----------
+   repeat: daily(每天) / weekly(每週特定星期) / once(單次,有截止日)
+   days:   僅 weekly 使用，0=日 1=一 2=二 … 6=六
+   due:    僅 once 使用，格式 YYYY-MM-DD
+   ages:   哪些年齡層預設會帶入這項（家長之後可自行增刪）
+   ※ weekly 的預設星期是常見安排，家長要依自己的課表調整
+*/
+const DEFAULT_STUDY = [
+  // --- 每天 ---
+  { name: "看聯絡簿",     desc: "確認今天的作業和要帶的東西", emoji: "✏️", stars: 1, repeat: "daily", ages: ["4-6","7-9","10-12"] },
+  { name: "寫作業",       desc: "把今天的作業寫完",           emoji: "📝", stars: 2, repeat: "daily", ages: ["4-6","7-9","10-12"] },
+  { name: "唸課文給家人聽", desc: "大聲把今天的課文唸一遍",   emoji: "🗣️", stars: 1, repeat: "daily", ages: ["4-6","7-9"] },
+  { name: "閱讀 15 分鐘", desc: "看課外書 15 分鐘",           emoji: "📖", stars: 1, repeat: "daily", ages: ["4-6","7-9"] },
+  { name: "閱讀 20 分鐘", desc: "看課外書 20 分鐘",           emoji: "📖", stars: 1, repeat: "daily", ages: ["10-12"] },
+  { name: "訂正錯題",     desc: "把寫錯的地方改對",           emoji: "✍️", stars: 1, repeat: "daily", ages: ["7-9","10-12"] },
+  { name: "預習明天課程", desc: "翻一下明天要上的內容",       emoji: "🔍", stars: 1, repeat: "daily", ages: ["10-12"] },
+  // --- 每週（星期請依實際課表調整）---
+  { name: "交回條",       desc: "把簽好名的回條交給老師",     emoji: "📄", stars: 1, repeat: "weekly", days: [1], ages: ["4-6","7-9","10-12"] },
+  { name: "帶體育服",     desc: "今天有體育課",               emoji: "👟", stars: 1, repeat: "weekly", days: [2,4], ages: ["4-6","7-9","10-12"] },
+  { name: "帶美術用具",   desc: "美勞課要用",                 emoji: "🎨", stars: 1, repeat: "weekly", days: [3], ages: ["4-6","7-9","10-12"] },
+  { name: "帶直笛",       desc: "音樂課要用",                 emoji: "🎵", stars: 1, repeat: "weekly", days: [5], ages: ["7-9","10-12"] },
+  { name: "帶打掃用具",   desc: "大掃除要用的抹布",           emoji: "🧹", stars: 1, repeat: "weekly", days: [5], ages: ["4-6","7-9"] },
+  { name: "整理書包夾層", desc: "把一週的舊考卷清出來",       emoji: "🎒", stars: 2, repeat: "weekly", days: [5], ages: ["7-9","10-12"] },
+];
+
+const STUDY_REPEAT_LABEL = { daily: "每天", weekly: "每週", once: "單次" };
+const WEEKDAY_LABEL = ["日","一","二","三","四","五","六"];
 
 /* ---------- 狀態紀錄選項 ---------- */
 const STATUS_FIELDS = [
@@ -99,6 +132,11 @@ const DEFAULT_REWARDS = [
   { name: "晚睡 15 分鐘",   cost: 20, emoji: "🌙" },
   { name: "選今天的晚餐",   cost: 25, emoji: "🍜" },
   { name: "去公園玩",       cost: 30, emoji: "🛝" },
+  { name: "去圖書館挑書",   cost: 15, emoji: "📖" },
+  { name: "桌遊 30 分鐘",   cost: 18, emoji: "🎲" },
+  { name: "選一本新書",     cost: 20, emoji: "📚" },
+  { name: "自己安排一小時", cost: 25, emoji: "⏰" },
+  { name: "選週末的活動",   cost: 35, emoji: "🎪" },
 ];
 
 /* 小孩顏色選項 */
@@ -106,5 +144,6 @@ const CHILD_COLORS = ["#FF6B6B","#4ECDC4","#FFD93D","#6BCB77","#A66CFF","#FF9F45
 
 window.APP_DATA = {
   ACTION_POOL, DEFAULT_LEVELS, LEVEL_TYPE_LABEL,
-  DEFAULT_FLOWS, DEFAULT_CHORES, STATUS_FIELDS, CHILD_COLORS, DEFAULT_REWARDS
+  DEFAULT_FLOWS, DEFAULT_CHORES, STATUS_FIELDS, CHILD_COLORS, DEFAULT_REWARDS,
+  DEFAULT_STUDY, STUDY_REPEAT_LABEL, WEEKDAY_LABEL
 };
