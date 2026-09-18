@@ -425,7 +425,8 @@ function buildPrompt(b) {
       + `回傳 JSON 陣列，每個物件欄位：name(任務名,10字內)、desc(一句話說明)、`
       + `stars(1到3的整數)、emoji(一個相關emoji)、`
       + `repeat(只能是 daily 或 weekly)、days(僅當 repeat 是 weekly 時給，`
-      + `0到6的整數陣列代表星期幾，0是星期日)。`;
+      + `0到6的整數陣列代表星期幾，0是星期日，最多給2天；`
+      + `每天都要做的請用 daily 而不是 weekly 填滿七天)。`;
   }
   if (b.type === 'flow') {
     const which = b.flow === 'night' ? '睡前' : '晨間';

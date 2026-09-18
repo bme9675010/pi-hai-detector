@@ -2271,13 +2271,14 @@ async function aiStudy(btn) {
   if (!items) return;
   const VALID = { daily: 1, weekly: 1, once: 1 };
   items.forEach(it => {
-    const repeat = VALID[it.repeat] ? it.repeat : 'daily';
+    let repeat = VALID[it.repeat] ? it.repeat : 'daily';
     let days = [];
     if (repeat === 'weekly') {
-      days = Array.isArray(it.days)
+      days = [...new Set(Array.isArray(it.days)
         ? it.days.map(n => parseInt(n, 10)).filter(n => n >= 0 && n <= 6)
-        : [];
-      if (!days.length) days = [1];      // AI 沒給星期就預設週一，家長再調
+        : [])];
+      if (!days.length) days = [1];             // AI 沒給星期就預設週一，家長再調
+      if (days.length >= 7) { repeat = 'daily'; days = []; }  // 填滿七天等於每天
     }
     studyLib().push({
       id: uid(),
