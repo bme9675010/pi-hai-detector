@@ -54,6 +54,7 @@ function blankChildData() {
     chores: { date:'', drawn:[], manual:[], doneIds:[] },
     study: { date:'', doneIds:[] },   // 今日學習任務完成狀態（跨日重置）
     exams: [],                        // 考試：準備進度、分數、進步獎勵
+    examDefaults: null,               // 上次新增考試用的設定（科目、星數），下次自動帶入
     examAwarded: [],                  // 考試已領獎勵（永久，不隨日期重置）
     studyTasks: null,                 // 學習題庫（逐小孩，首次進入依年齡帶入預設）
     chorePhotos: {},        // choreId:date → { url, t }（跨裝置聯集合併）
@@ -2101,6 +2102,26 @@ function exams() {
 }
 function examById(id) { return exams().find(e => e.id === id); }
 
+// 新增考試時帶入「這個小孩上次用的設定」——哥哥 5 科、妹妹 2 科，星數也各自不同，
+// 每次重設很煩。注意 bonusStars 可以是 0，所以不能用 || 判斷。
+function examDefaults() {
+  const d = cdata().examDefaults || {};
+  return {
+    starsPerSubject: d.starsPerSubject != null ? d.starsPerSubject : 3,
+    bonusStars:      d.bonusStars      != null ? d.bonusStars      : 10,
+    finishStars:     d.finishStars     != null ? d.finishStars     : 5,
+    subjects: (Array.isArray(d.subjects) && d.subjects.length) ? d.subjects : ['國語', '數學'],
+  };
+}
+function rememberExamDefaults(e) {
+  cdata().examDefaults = {
+    starsPerSubject: e.starsPerSubject,
+    bonusStars:      e.bonusStars,
+    finishStars:     e.finishStars,
+    subjects: (e.subjects || []).map(x => x.name),
+  };
+}
+
 // 考試倒數＋各科準備勾選（放在學習頁最上面）
 function examCardsHTML() {
   const today = todayStr();
@@ -2185,8 +2206,10 @@ function renderExams() {
     </div>`;
   }).join('') : `<div class="empty"><div class="e">📝</div>還沒有考試<br>在下面新增一場</div>`;
 
+  const def = examDefaults();
+  const remembered = !!cdata().examDefaults;
   const subjectChips = D.DEFAULT_SUBJECTS.map(nm =>
-    `<button type="button" class="choice ${nm === '國語' || nm === '數學' ? 'on' : ''}" data-s="${esc(nm)}"
+    `<button type="button" class="choice ${def.subjects.includes(nm) ? 'on' : ''}" data-s="${esc(nm)}"
        onclick="this.classList.toggle('on')">${esc(nm)}</button>`).join('');
 
   $app.innerHTML = `
@@ -2206,6 +2229,9 @@ function renderExams() {
     ${rows}
     <div class="section-title">新增考試</div>
     <div class="card">
+      ${remembered ? `<small class="hint" style="display:block;margin-bottom:8px">
+        ↩️ 已帶入 ${esc(child().name)} 上次的科目與星數設定，要改直接改
+      </small>` : ''}
       <div class="field-label">名稱</div>
       <input type="text" id="ex-name" placeholder="例如：期中考" maxlength="12" value="期中考" />
       <div class="field-label">考試日期</div>
@@ -2213,15 +2239,21 @@ function renderExams() {
       <div class="field-label">考哪幾科</div>
       <div class="chip-group" id="ex-subs">${subjectChips}</div>
       <div class="field-label">每科準備完成給幾顆星</div>
-      <input type="number" id="ex-per" min="1" max="10" value="3" />
+      <input type="number" id="ex-per" min="1" max="10" value="${def.starsPerSubject}" />
       <div class="field-label">全科完成的額外獎勵</div>
-      <input type="number" id="ex-bonus" min="0" max="50" value="10" />
+      <input type="number" id="ex-bonus" min="0" max="50" value="${def.bonusStars}" />
       <div class="field-label">考完了的完賽獎勵</div>
-      <input type="number" id="ex-finish" min="0" max="50" value="5" />
+      <input type="number" id="ex-finish" min="0" max="50" value="${def.finishStars}" />
       <div class="gap8"></div>
       <button class="btn block accent" onclick="addExam()">＋ 新增考試</button>
     </div>
   `;
+}
+// 讀數字欄位並夾在範圍內。不用 `parseInt(...) || dflt`：使用者輸入 0 時
+// 0 是 falsy 會被預設值蓋掉，家長就沒辦法把獎勵設成 0。
+function numField(id, dflt, lo, hi) {
+  const v = parseInt((document.getElementById(id) || {}).value, 10);
+  return Math.min(hi, Math.max(lo, isNaN(v) ? dflt : v));
 }
 function pickedSubjects(containerId) {
   return [...document.querySelectorAll('#' + containerId + ' .choice.on')].map(b => b.dataset.s);
@@ -2236,11 +2268,12 @@ function addExam() {
   exams().push({
     id: uid(), name, date,
     subjects: subs.map(nm => ({ id: uid(), name: nm, ready: false, score: null })),
-    starsPerSubject: Math.min(10, Math.max(1, parseInt(document.getElementById('ex-per').value, 10) || 3)),
-    bonusStars:      Math.min(50, Math.max(0, parseInt(document.getElementById('ex-bonus').value, 10) || 10)),
-    finishStars:     Math.min(50, Math.max(0, parseInt(document.getElementById('ex-finish').value, 10) || 5)),
+    starsPerSubject: numField('ex-per',    3,  1, 10),
+    bonusStars:      numField('ex-bonus',  10, 0, 50),
+    finishStars:     numField('ex-finish', 5,  0, 50),
     finished: false, settled: false,
   });
+  rememberExamDefaults(exams()[exams().length - 1]);
   save(); renderExams();
   toast('已新增考試 ✓');
 }
@@ -2285,9 +2318,10 @@ function saveExam(id) {
   // 保留既有科目的勾選與分數，只增減
   e.subjects = subs.map(nm => (e.subjects || []).find(s => s.name === nm)
     || { id: uid(), name: nm, ready: false, score: null });
-  e.starsPerSubject = Math.min(10, Math.max(1, parseInt(document.getElementById('ee-per').value, 10) || 3));
-  e.bonusStars      = Math.min(50, Math.max(0, parseInt(document.getElementById('ee-bonus').value, 10) || 10));
-  e.finishStars     = Math.min(50, Math.max(0, parseInt(document.getElementById('ee-finish').value, 10) || 5));
+  e.starsPerSubject = numField('ee-per',    3,  1, 10);
+  e.bonusStars      = numField('ee-bonus',  10, 0, 50);
+  e.finishStars     = numField('ee-finish', 5,  0, 50);
+  rememberExamDefaults(e);   // 在這裡改了星數，下次新增考試就沿用
   save();
   document.querySelector('.modal-mask')?.remove();
   renderExams();

@@ -115,6 +115,25 @@ function pickNow(loc, elName) {
   return pick.ElementValue && pick.ElementValue[0];
 }
 
+
+
+/* 數字欄位讀取（來自 app.js numField，抽成純函式版本） */
+function clampField(raw, dflt, lo, hi) {
+  const v = parseInt(raw, 10);
+  return Math.min(hi, Math.max(lo, isNaN(v) ? dflt : v));
+}
+
+/* 考試預設值帶入（來自 app.js examDefaults，抽成純函式版本） */
+function resolveExamDefaults(stored) {
+  const d = stored || {};
+  return {
+    starsPerSubject: d.starsPerSubject != null ? d.starsPerSubject : 3,
+    bonusStars:      d.bonusStars      != null ? d.bonusStars      : 10,
+    finishStars:     d.finishStars     != null ? d.finishStars     : 5,
+    subjects: (Array.isArray(d.subjects) && d.subjects.length) ? d.subjects : ['國語', '數學'],
+  };
+}
+
 /* 考試邏輯（來自 app.js 考試模組） */
 // 進步獎勵規則。刻意補上「維持高分」這一條：
 // 純比進步會懲罰原本就考高分的小孩（98 分最多只能進步 2 分），
@@ -811,5 +830,61 @@ describe('考試準備進度與分類', () => {
   test('空清單不會壞', () => {
     assert.deepEqual(upcomingExams([], '2026-11-02'), []);
     assert.deepEqual(pendingExams(null, '2026-11-02'), []);
+  });
+});
+
+/* ---------- resolveExamDefaults（新增考試帶入上次設定） ---------- */
+describe('examDefaults（帶入上次設定）', () => {
+  test('沒有存過設定 → 給合理預設', () => {
+    assert.deepEqual(resolveExamDefaults(null), {
+      starsPerSubject: 3, bonusStars: 10, finishStars: 5, subjects: ['國語','數學'] });
+    assert.deepEqual(resolveExamDefaults(undefined).subjects, ['國語','數學']);
+    assert.deepEqual(resolveExamDefaults({}).starsPerSubject, 3);
+  });
+  test('有存過就照用（妹妹 5 星、哥哥 3 星各自記住）', () => {
+    const sis = resolveExamDefaults({ starsPerSubject:5, bonusStars:10, finishStars:5, subjects:['國語','數學'] });
+    const bro = resolveExamDefaults({ starsPerSubject:3, bonusStars:10, finishStars:5,
+                                      subjects:['國語','數學','英語','自然','社會'] });
+    assert.equal(sis.starsPerSubject, 5);
+    assert.equal(bro.starsPerSubject, 3);
+    assert.equal(sis.subjects.length, 2);
+    assert.equal(bro.subjects.length, 5);
+  });
+  test('bonusStars 存 0 要保留 0，不能被預設值 10 蓋掉', () => {
+    assert.equal(resolveExamDefaults({ bonusStars: 0 }).bonusStars, 0,
+      '用 || 判斷就會在這裡壞掉');
+    assert.equal(resolveExamDefaults({ finishStars: 0 }).finishStars, 0);
+  });
+  test('科目存成空陣列時回到預設（避免新增表單一科都沒勾）', () => {
+    assert.deepEqual(resolveExamDefaults({ subjects: [] }).subjects, ['國語','數學']);
+    assert.deepEqual(resolveExamDefaults({ subjects: 'bad' }).subjects, ['國語','數學']);
+  });
+  test('只存了一部分欄位，其餘補預設', () => {
+    const d = resolveExamDefaults({ starsPerSubject: 5 });
+    assert.equal(d.starsPerSubject, 5);
+    assert.equal(d.bonusStars, 10);
+    assert.deepEqual(d.subjects, ['國語','數學']);
+  });
+});
+
+/* ---------- clampField（數字欄位，0 不能被預設值吃掉） ---------- */
+describe('clampField（獎勵數字欄位）', () => {
+  test('輸入 0 要保留 0，不能被預設值蓋掉', () => {
+    assert.equal(clampField('0', 10, 0, 50), 0, 'parseInt||dflt 會在這裡壞掉');
+    assert.equal(clampField('0', 5, 0, 50), 0);
+  });
+  test('沒填或非數字才用預設', () => {
+    assert.equal(clampField('', 10, 0, 50), 10);
+    assert.equal(clampField('abc', 10, 0, 50), 10);
+    assert.equal(clampField(undefined, 5, 0, 50), 5);
+  });
+  test('正常數值照用', () => {
+    assert.equal(clampField('6', 3, 1, 10), 6);
+    assert.equal(clampField('25', 10, 0, 50), 25);
+  });
+  test('超出範圍會夾住', () => {
+    assert.equal(clampField('999', 10, 0, 50), 50);
+    assert.equal(clampField('-5', 10, 0, 50), 0);
+    assert.equal(clampField('0', 3, 1, 10), 1, '每科星數下限是 1');
   });
 });
