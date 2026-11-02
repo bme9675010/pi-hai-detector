@@ -55,7 +55,7 @@ function blankChildData() {
     study: { date:'', doneIds:[] },   // 今日學習任務完成狀態（跨日重置）
     exams: [],                        // 考試：準備進度、分數、進步獎勵
     examDefaults: null,               // 上次新增考試用的設定（科目、星數），下次自動帶入
-    examAwarded: [],                  // 考試已領獎勵（永久，不隨日期重置）
+    examAwarded: {},                  // 考試已領獎勵 { key: 星數 }（永久，不隨日期重置）
     studyTasks: null,                 // 學習題庫（逐小孩，首次進入依年齡帶入預設）
     chorePhotos: {},        // choreId:date → { url, t }（跨裝置聯集合併）
     chorePhotosDel: {},     // choreId:date → t（刪除墓碑，讓刪除也能跨裝置傳播）
@@ -266,7 +266,7 @@ function cdata() {
   if (!state.data[id].study) state.data[id].study = { date:'', doneIds:[] };
   if (!Array.isArray(state.data[id].study.doneIds)) state.data[id].study.doneIds = [];
   if (!Array.isArray(state.data[id].exams)) state.data[id].exams = [];
-  if (!Array.isArray(state.data[id].examAwarded)) state.data[id].examAwarded = [];
+  state.data[id].examAwarded = toAwardMap(state.data[id].examAwarded);
   ensureStudyLib(id);
   return state.data[id];
 }
@@ -288,7 +288,7 @@ function isAwarded(key) {
 function logStar(type, name, delta) {
   const cd = cdata();
   if (!Array.isArray(cd.starLog)) cd.starLog = [];
-  cd.starLog.push({ ts: Date.now(), date: todayStr(), type, name: String(name || '').slice(0, 24), delta });
+  cd.starLog.push({ id: uid(), ts: Date.now(), date: todayStr(), type, name: String(name || '').slice(0, 24), delta });
   if (cd.starLog.length > 80) cd.starLog = cd.starLog.slice(-80);   // 只留最近 80 筆
 }
 /* 同一天同一任務只給一次星星，回傳是否真的給了 */
@@ -1036,7 +1036,7 @@ function resetProgress() {
     d.chorePhotosDel = {};
     d.study = { date: '', doneIds: [] };
     d.exams = [];
-    d.examAwarded = [];
+    d.examAwarded = {};
     d.status = {};
     d.redeemLog = [];
     d.awarded = { date: '', keys: [] };
@@ -2089,11 +2089,16 @@ function pendingExams(exams, today) {
 
 /* 考試獎勵是「一輩子一次」而不是「每天一次」——用獨立清單，不隨日期重置。
    （awardOnce 會跨日清空 keys，用在考試會變成取消再勾就能重領） */
+// 帳本存成 { key: 星數 }（舊版是純陣列，轉過來時金額未知記 0，合併時就不補星）
+function toAwardMap(v) {
+  if (Array.isArray(v)) { const m = {}; v.forEach(k => { m[k] = 0; }); return m; }
+  return (v && typeof v === 'object') ? v : {};
+}
 function awardExamOnce(key, n, ev, msg, silent) {
   const cd = cdata();
-  if (!Array.isArray(cd.examAwarded)) cd.examAwarded = [];
-  if (cd.examAwarded.includes(key)) return false;
-  cd.examAwarded.push(key);
+  if (!cd.examAwarded || Array.isArray(cd.examAwarded)) cd.examAwarded = toAwardMap(cd.examAwarded);
+  if (key in cd.examAwarded) return false;
+  cd.examAwarded[key] = n;
   markActiveToday();
   addStars(n, ev);
   logStar('earn', (msg || '').replace(/[！!。]/g, ''), n);   // msg 仍用來寫星星明細
@@ -2790,7 +2795,7 @@ function redeemReward(id, ev) {
   if (stars < r.cost) return;
   if (!confirm(`用 ${r.cost} 顆星星兌換「${r.name}」嗎？`)) return;
   state.stars[state.activeChild] = stars - r.cost;
-  cdata().redeemLog.push({ name: r.name, cost: r.cost, date: todayStr() });
+  cdata().redeemLog.push({ id: uid(), name: r.name, cost: r.cost, date: todayStr() });
   logStar('spend', '兌換「' + r.name + '」', -r.cost);
   save();
   if (ev) flyStars(ev, 3);

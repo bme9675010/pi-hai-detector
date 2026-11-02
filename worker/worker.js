@@ -281,15 +281,10 @@ export default {
       if (!stored.shared) stored.shared = { rewards: [], customChores: [], customActions: [], t: 0 };
       if (!stored.deleted) stored.deleted = {};
       const inc = body.doc || {};
-      // 每個小孩：誰的時間戳新就用誰的（但家事照片改「逐張聯集」，見下）
+      // 每個小孩：主體取時間戳新的那份，但永久性資料聯集、並把對方已發過的獎勵補回星星
       const inC = inc.children || {};
       for (const cid in inC) {
-        const mine = inC[cid], theirs = stored.children[cid];
-        // 家事照片是純累加資料：兩邊聯集，避免時間戳輸的那台把對方的照片洗掉
-        const photos = mergePhotos(theirs && theirs.data, mine && mine.data);
-        if (!theirs || (mine.t || 0) >= (theirs.t || 0)) stored.children[cid] = mine;
-        const win = stored.children[cid];
-        if (win && win.data && photos) { win.data.chorePhotos = photos.keep; win.data.chorePhotosDel = photos.del; }
+        stored.children[cid] = mergeChildRecord(stored.children[cid], inC[cid]);
       }
       // 共用設定（獎勵/自訂內容）：較新者勝
       if (inc.shared && (inc.shared.t || 0) > (stored.shared.t || 0)) stored.shared = inc.shared;
@@ -388,6 +383,96 @@ function mergePhotos(aData, bData) {
     if (k in keep && del[k] > tOf(keep[k])) delete keep[k];
   }
   return { keep, del };
+}
+
+/* 逐小孩合併。
+   「整包比時間戳、新的蓋舊的」會弄丟另一台已經發出去的獎勵：兩台各領 10 和 5，
+   晚同步的那台會把對方的洗掉。這裡改成：主體取時間戳新的那份（它的星星已含
+   自己發過的獎勵），再把「主體帳本裡沒有、但對方有」的獎勵金額補回星星。
+   永久性資料（帳本、兌換、連續天數、考試、照片）一律聯集；
+   每日性資料（今日打勾、今日放電）維持跟主體走，反正隔天就重置。 */
+function toAwardMap(v) {
+  if (Array.isArray(v)) { const m = {}; v.forEach(k => { m[k] = 0; }); return m; }
+  return (v && typeof v === 'object') ? v : {};
+}
+function uniq(arr) { return [...new Set(arr || [])]; }
+
+// 考試：逐場合併。ready 只要任一邊勾過就算勾過；分數取有填的（兩邊都有填就用主體的）
+function mergeExamList(winList, loseList) {
+  const out = [];
+  const byId = {};
+  (winList || []).forEach(e => { byId[e.id] = JSON.parse(JSON.stringify(e)); out.push(byId[e.id]); });
+  (loseList || []).forEach(le => {
+    const we = byId[le.id];
+    if (!we) { out.push(le); return; }          // 主體沒有這場 → 整場帶過來
+    const lsubs = {};
+    (le.subjects || []).forEach(s => { lsubs[s.id] = s; });
+    (we.subjects || []).forEach(s => {
+      const ls = lsubs[s.id];
+      if (!ls) return;
+      if (ls.ready) s.ready = true;                                  // 準備好了是單向的
+      if (s.score == null && ls.score != null) s.score = ls.score;   // 補上對方登記的分數
+    });
+    if (le.finished) we.finished = true;
+    if (le.settled)  we.settled  = true;
+  });
+  return out;
+}
+
+function mergeChildRecord(stored, incoming) {
+  if (!stored)   return incoming;
+  if (!incoming) return stored;
+  const win  = (incoming.t || 0) >= (stored.t || 0) ? incoming : stored;
+  const lose = win === incoming ? stored : incoming;
+  const wd = win.data || (win.data = {});
+  const ld = lose.data || {};
+
+  let dStars = 0, dEarned = 0;
+
+  // 考試獎勵帳本（帶金額）
+  const wEx = toAwardMap(wd.examAwarded), lEx = toAwardMap(ld.examAwarded);
+  for (const k in lEx) {
+    if (!(k in wEx)) { wEx[k] = lEx[k]; dStars += lEx[k] || 0; dEarned += lEx[k] || 0; }
+  }
+  wd.examAwarded = wEx;
+
+  // 闖關獎勵（固定每關 2 星）
+  const wLv = new Set(wd.levelAwarded || []);
+  (ld.levelAwarded || []).forEach(id => {
+    if (!wLv.has(id)) { wLv.add(id); dStars += 2; dEarned += 2; }
+  });
+  wd.levelAwarded = [...wLv];
+
+  // 兌換紀錄：補回主體不知道的消費（否則花掉的星星會被還回去）
+  const rkey = r => r.id || `${r.name}|${r.cost}|${r.date}`;
+  const wRd = (wd.redeemLog || []).slice();
+  const seenRd = new Set(wRd.map(rkey));
+  (ld.redeemLog || []).forEach(r => {
+    if (!seenRd.has(rkey(r))) { wRd.push(r); seenRd.add(rkey(r)); dStars -= (r.cost || 0); }
+  });
+  wd.redeemLog = wRd;
+
+  // 連續天數
+  wd.activeDays = uniq([...(wd.activeDays || []), ...(ld.activeDays || [])]).sort();
+
+  // 考試本體（準備狀態與分數）
+  wd.exams = mergeExamList(wd.exams, ld.exams);
+
+  // 家事照片（原本就是逐張聯集）
+  const photos = mergePhotos(wd, ld);
+  if (photos) { wd.chorePhotos = photos.keep; wd.chorePhotosDel = photos.del; }
+
+  // 星星明細：聯集去重後依時間排序，只留最近 80 筆（純顯示用，不影響星數）
+  const skey = e => e.id || `${e.ts}|${e.name}|${e.delta}`;
+  const seenLog = new Set();
+  wd.starLog = [...(wd.starLog || []), ...(ld.starLog || [])]
+    .filter(e => { const k = skey(e); if (seenLog.has(k)) return false; seenLog.add(k); return true; })
+    .sort((x, y) => (x.ts || 0) - (y.ts || 0))
+    .slice(-80);
+
+  win.stars  = Math.max(0, (win.stars  || 0) + dStars);
+  win.earned = Math.max(0, (win.earned || 0) + dEarned);
+  return win;
 }
 
 function json(obj, status, cors) {

@@ -216,6 +216,91 @@ function mergePhotos(aData, bData) {
   return { keep, del };
 }
 
+/* 逐小孩合併（來自 worker/worker.js mergeChildRecord） */
+function toAwardMap(v) {
+  if (Array.isArray(v)) { const m = {}; v.forEach(k => { m[k] = 0; }); return m; }
+  return (v && typeof v === 'object') ? v : {};
+}
+function uniq(arr) { return [...new Set(arr || [])]; }
+
+// 考試：逐場合併。ready 只要任一邊勾過就算勾過；分數取有填的（兩邊都有填就用主體的）
+function mergeExamList(winList, loseList) {
+  const out = [];
+  const byId = {};
+  (winList || []).forEach(e => { byId[e.id] = JSON.parse(JSON.stringify(e)); out.push(byId[e.id]); });
+  (loseList || []).forEach(le => {
+    const we = byId[le.id];
+    if (!we) { out.push(le); return; }          // 主體沒有這場 → 整場帶過來
+    const lsubs = {};
+    (le.subjects || []).forEach(s => { lsubs[s.id] = s; });
+    (we.subjects || []).forEach(s => {
+      const ls = lsubs[s.id];
+      if (!ls) return;
+      if (ls.ready) s.ready = true;                                  // 準備好了是單向的
+      if (s.score == null && ls.score != null) s.score = ls.score;   // 補上對方登記的分數
+    });
+    if (le.finished) we.finished = true;
+    if (le.settled)  we.settled  = true;
+  });
+  return out;
+}
+
+function mergeChildRecord(stored, incoming) {
+  if (!stored)   return incoming;
+  if (!incoming) return stored;
+  const win  = (incoming.t || 0) >= (stored.t || 0) ? incoming : stored;
+  const lose = win === incoming ? stored : incoming;
+  const wd = win.data || (win.data = {});
+  const ld = lose.data || {};
+
+  let dStars = 0, dEarned = 0;
+
+  // 考試獎勵帳本（帶金額）
+  const wEx = toAwardMap(wd.examAwarded), lEx = toAwardMap(ld.examAwarded);
+  for (const k in lEx) {
+    if (!(k in wEx)) { wEx[k] = lEx[k]; dStars += lEx[k] || 0; dEarned += lEx[k] || 0; }
+  }
+  wd.examAwarded = wEx;
+
+  // 闖關獎勵（固定每關 2 星）
+  const wLv = new Set(wd.levelAwarded || []);
+  (ld.levelAwarded || []).forEach(id => {
+    if (!wLv.has(id)) { wLv.add(id); dStars += 2; dEarned += 2; }
+  });
+  wd.levelAwarded = [...wLv];
+
+  // 兌換紀錄：補回主體不知道的消費（否則花掉的星星會被還回去）
+  const rkey = r => r.id || `${r.name}|${r.cost}|${r.date}`;
+  const wRd = (wd.redeemLog || []).slice();
+  const seenRd = new Set(wRd.map(rkey));
+  (ld.redeemLog || []).forEach(r => {
+    if (!seenRd.has(rkey(r))) { wRd.push(r); seenRd.add(rkey(r)); dStars -= (r.cost || 0); }
+  });
+  wd.redeemLog = wRd;
+
+  // 連續天數
+  wd.activeDays = uniq([...(wd.activeDays || []), ...(ld.activeDays || [])]).sort();
+
+  // 考試本體（準備狀態與分數）
+  wd.exams = mergeExamList(wd.exams, ld.exams);
+
+  // 家事照片（原本就是逐張聯集）
+  const photos = mergePhotos(wd, ld);
+  if (photos) { wd.chorePhotos = photos.keep; wd.chorePhotosDel = photos.del; }
+
+  // 星星明細：聯集去重後依時間排序，只留最近 80 筆（純顯示用，不影響星數）
+  const skey = e => e.id || `${e.ts}|${e.name}|${e.delta}`;
+  const seenLog = new Set();
+  wd.starLog = [...(wd.starLog || []), ...(ld.starLog || [])]
+    .filter(e => { const k = skey(e); if (seenLog.has(k)) return false; seenLog.add(k); return true; })
+    .sort((x, y) => (x.ts || 0) - (y.ts || 0))
+    .slice(-80);
+
+  win.stars  = Math.max(0, (win.stars  || 0) + dStars);
+  win.earned = Math.max(0, (win.earned || 0) + dEarned);
+  return win;
+}
+
 /* 雲端合併邏輯（來自 worker/worker.js /sync/merge 路由） */
 function mergeCloudDoc(stored, inc) {
   if (!stored.children) stored.children = {};
@@ -224,11 +309,7 @@ function mergeCloudDoc(stored, inc) {
 
   const inC = inc.children || {};
   for (const cid in inC) {
-    const mine = inC[cid], theirs = stored.children[cid];
-    const photos = mergePhotos(theirs && theirs.data, mine && mine.data);
-    if (!theirs || (mine.t || 0) >= (theirs.t || 0)) stored.children[cid] = mine;
-    const win = stored.children[cid];
-    if (win && win.data && photos) { win.data.chorePhotos = photos.keep; win.data.chorePhotosDel = photos.del; }
+    stored.children[cid] = mergeChildRecord(stored.children[cid], inC[cid]);
   }
   if (inc.shared && (inc.shared.t || 0) > (stored.shared.t || 0))
     stored.shared = inc.shared;
@@ -886,5 +967,127 @@ describe('clampField（獎勵數字欄位）', () => {
     assert.equal(clampField('999', 10, 0, 50), 50);
     assert.equal(clampField('-5', 10, 0, 50), 0);
     assert.equal(clampField('0', 3, 1, 10), 1, '每科星數下限是 1');
+  });
+});
+
+/* ---------- mergeChildRecord（跨裝置不再弄丟已發出的獎勵） ---------- */
+describe('mergeChildRecord（逐小孩合併）', () => {
+  const kid = (t, stars, earned, data) => ({ t, stars, earned, profile:{ id:'k' }, data: data || {} });
+
+  test('兩台各自發獎勵 → 星星相加，不是取其中一台', () => {
+    // 基準 6 星。媽媽那台再發 10（共 16），爸爸那台再發 5（共 11）且時間戳較新
+    const mom = kid(100, 16, 16, { examAwarded: { 'base': 6, 'exam:X:a': 10 } });
+    const dad = kid(200, 11, 11, { examAwarded: { 'base': 6, 'exam:X:b': 5 } });
+    const m = mergeChildRecord(mom, dad);
+    assert.equal(m.stars, 21, '主體是爸爸的 11，補回媽媽獨有的 10 → 21（修前會是 11）');
+  });
+
+  test('合併後帳本是聯集', () => {
+    const mom = kid(100, 16, 16, { examAwarded: { 'a': 10 } });
+    const dad = kid(200, 11, 11, { examAwarded: { 'b': 5 } });
+    const m = mergeChildRecord(mom, dad);
+    assert.deepEqual(Object.keys(m.data.examAwarded).sort(), ['a','b']);
+  });
+
+  test('補回的金額正確（主體 11 + 對方獨有的 10 = 21）', () => {
+    const mom = kid(100, 16, 16, { examAwarded: { 'base':6, 'a': 10 } });
+    const dad = kid(200, 11, 11, { examAwarded: { 'base':6, 'b': 5 } });
+    const m = mergeChildRecord(mom, dad);
+    assert.equal(m.stars, 21);
+    assert.equal(m.earned, 21);
+  });
+
+  test('相同的獎勵不會重複計算', () => {
+    const mom = kid(100, 10, 10, { examAwarded: { 'a': 10 } });
+    const dad = kid(200, 10, 10, { examAwarded: { 'a': 10 } });
+    assert.equal(mergeChildRecord(mom, dad).stars, 10, '同一筆獎勵不該加兩次');
+  });
+
+  test('舊版陣列格式金額未知 → 聯集但不補星（寧可少算也不要憑空生星）', () => {
+    const mom = kid(100, 16, 16, { examAwarded: ['a'] });
+    const dad = kid(200, 11, 11, { examAwarded: ['b'] });
+    const m = mergeChildRecord(mom, dad);
+    assert.equal(m.stars, 11);
+    assert.deepEqual(Object.keys(m.data.examAwarded).sort(), ['a','b']);
+  });
+
+  test('闖關獎勵補回每關 2 星', () => {
+    const mom = kid(100, 4, 4, { levelAwarded: ['lv1','lv2'] });
+    const dad = kid(200, 2, 2, { levelAwarded: ['lv1'] });
+    const m = mergeChildRecord(mom, dad);
+    assert.equal(m.stars, 4, '2 + 補回 lv2 的 2 星');
+    assert.deepEqual(m.data.levelAwarded.sort(), ['lv1','lv2']);
+  });
+
+  test('兌換紀錄補回時要扣星（花掉的不能還回來）', () => {
+    const mom = kid(100, 0, 20, { redeemLog: [{ id:'r1', name:'卡通', cost:10, date:'2026-11-01' }] });
+    const dad = kid(200, 10, 20, { redeemLog: [] });
+    const m = mergeChildRecord(mom, dad);
+    assert.equal(m.stars, 0, '10 − 補回的兌換 10 = 0');
+    assert.equal(m.data.redeemLog.length, 1);
+  });
+
+  test('星星不會被扣成負數', () => {
+    const mom = kid(100, 0, 0, { redeemLog: [{ id:'r1', name:'x', cost:999, date:'2026-11-01' }] });
+    const dad = kid(200, 5, 5, {});
+    assert.equal(mergeChildRecord(mom, dad).stars, 0);
+  });
+
+  test('連續天數聯集', () => {
+    const mom = kid(100, 0, 0, { activeDays: ['2026-11-01','2026-11-02'] });
+    const dad = kid(200, 0, 0, { activeDays: ['2026-11-02','2026-11-03'] });
+    assert.deepEqual(mergeChildRecord(mom, dad).data.activeDays,
+                     ['2026-11-01','2026-11-02','2026-11-03']);
+  });
+
+  test('考試：準備狀態取聯集、分數互補', () => {
+    const mom = kid(100, 0, 0, { exams: [{ id:'e1', subjects:[
+      { id:'s1', ready:true,  score:85 }, { id:'s2', ready:false, score:null }] }] });
+    const dad = kid(200, 0, 0, { exams: [{ id:'e1', subjects:[
+      { id:'s1', ready:false, score:null }, { id:'s2', ready:true,  score:90 }] }] });
+    const subs = mergeChildRecord(mom, dad).data.exams[0].subjects;
+    assert.equal(subs[0].ready, true,  's1 媽媽勾過就算勾過');
+    assert.equal(subs[0].score, 85,    's1 分數要保留');
+    assert.equal(subs[1].ready, true,  's2 爸爸勾過');
+    assert.equal(subs[1].score, 90,    's2 補上爸爸登記的分數');
+  });
+
+  test('考試：主體沒有的整場帶過來', () => {
+    const mom = kid(100, 0, 0, { exams: [{ id:'e1', subjects:[] }] });
+    const dad = kid(200, 0, 0, { exams: [] });
+    assert.equal(mergeChildRecord(mom, dad).data.exams.length, 1);
+  });
+
+  test('星星明細聯集去重並留最近 80 筆', () => {
+    const mk = (i, who) => ({ id: who + i, ts: i, name:'x', delta:1 });
+    const mom = kid(100, 0, 0, { starLog: Array.from({length:50}, (_,i)=>mk(i,'m')) });
+    const dad = kid(200, 0, 0, { starLog: Array.from({length:50}, (_,i)=>mk(i,'d')) });
+    const log = mergeChildRecord(mom, dad).data.starLog;
+    assert.equal(log.length, 80, '100 筆取最近 80');
+  });
+
+  test('重複的明細只留一筆', () => {
+    const e = { id:'x1', ts:1, name:'a', delta:1 };
+    const m = mergeChildRecord(kid(100,0,0,{ starLog:[e] }), kid(200,0,0,{ starLog:[e] }));
+    assert.equal(m.data.starLog.length, 1);
+  });
+
+  test('照片仍維持逐張聯集', () => {
+    const mom = kid(100, 0, 0, { chorePhotos: { 'c1:2026-11-01': { url:'mom', t:1 } } });
+    const dad = kid(200, 0, 0, { chorePhotos: { 'c2:2026-11-01': { url:'dad', t:2 } } });
+    const p = mergeChildRecord(mom, dad).data.chorePhotos;
+    assert.equal(p['c1:2026-11-01'].url, 'mom');
+    assert.equal(p['c2:2026-11-01'].url, 'dad');
+  });
+
+  test('雲端沒這個小孩 → 直接用傳入的', () => {
+    const dad = kid(200, 5, 5, {});
+    assert.equal(mergeChildRecord(null, dad), dad);
+  });
+
+  test('合併順序不影響最終星數', () => {
+    const A = () => kid(100, 16, 16, { examAwarded: { base:6, a:10 } });
+    const B = () => kid(200, 11, 11, { examAwarded: { base:6, b:5 } });
+    assert.equal(mergeChildRecord(A(), B()).stars, mergeChildRecord(B(), A()).stars);
   });
 });
