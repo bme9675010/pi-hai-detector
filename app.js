@@ -644,6 +644,14 @@ function cardStatus(r) {
     return '今天還沒抽';
   }
   if (r === 'study') {
+    // 考試迫在眉睫時優先顯示倒數——這是當下最要緊的資訊
+    const up = upcomingExams(Array.isArray(cd.exams) ? cd.exams : [], t);
+    if (up.length) {
+      const e = up[0], p = examPrepRate(e);
+      return `${e.name} ${dueLabel(daysUntil(e.date))} · 準備 ${p.done}/${p.total}`;
+    }
+    const pend = pendingExams(Array.isArray(cd.exams) ? cd.exams : [], t);
+    if (pend.length) return `${pend[0].name} 待登記分數`;
     const todays = studyTasksForToday(ensureStudyLib(state.activeChild), t);
     if (!todays.length) return '今天沒有學習任務';
     const done = (cd.study.date === t ? cd.study.doneIds : []).filter(id => todays.some(x => x.id === id)).length;
@@ -2081,15 +2089,15 @@ function pendingExams(exams, today) {
 
 /* 考試獎勵是「一輩子一次」而不是「每天一次」——用獨立清單，不隨日期重置。
    （awardOnce 會跨日清空 keys，用在考試會變成取消再勾就能重領） */
-function awardExamOnce(key, n, ev, msg) {
+function awardExamOnce(key, n, ev, msg, silent) {
   const cd = cdata();
   if (!Array.isArray(cd.examAwarded)) cd.examAwarded = [];
   if (cd.examAwarded.includes(key)) return false;
   cd.examAwarded.push(key);
   markActiveToday();
   addStars(n, ev);
-  logStar('earn', (msg || '').replace(/[！!。]/g, ''), n);
-  if (msg) rewardModal(n, msg);
+  logStar('earn', (msg || '').replace(/[！!。]/g, ''), n);   // msg 仍用來寫星星明細
+  if (msg && !silent) rewardModal(n, msg);                   // silent：由呼叫端合併成一個彈窗
   save();
   return true;
 }
@@ -2167,14 +2175,25 @@ function toggleSubjectReady(examId, subId, ev) {
   const s = (e.subjects || []).find(x => x.id === subId); if (!s) return;
   if (s.ready) {
     s.ready = false;              // 取消不退星
+    save(); renderStudy();
+    return;
+  }
+  s.ready = true;
+  // ?? 不是 ||：家長把 bonus 設成 0 時，0 是 falsy 會被預設值蓋掉
+  const per   = e.starsPerSubject ?? 3;
+  const bonus = e.bonusStars ?? 10;
+  // 先靜默記帳，最後只跳「一個」彈窗——否則勾完最後一科會同時疊兩個視窗
+  let gained = 0;
+  if (awardExamOnce(`exam:${examId}:${subId}`, per, ev, `${e.name}「${s.name}」準備好了`, true)) gained += per;
+  const all = examPrepRate(e).all;
+  if (all && bonus > 0
+      && awardExamOnce(`exam:${examId}:allready`, bonus, null, `${e.name} 全部科目都準備好了`, true)) {
+    gained += bonus;
+  }
+  if (gained > 0) {
+    rewardModal(gained, all ? `${e.name} 全部科目都準備好了！` : `${e.name}「${s.name}」準備好了！`);
   } else {
-    s.ready = true;
-    const got = awardExamOnce(`exam:${examId}:${subId}`, e.starsPerSubject || 3, ev, `${e.name}「${s.name}」準備好了！`);
-    if (!got) toast('這一科之前已經領過星星囉 ⭐');
-    // 全科完成的額外獎勵（整場考試只給一次）
-    if (examPrepRate(e).all) {
-      awardExamOnce(`exam:${examId}:allready`, e.bonusStars || 10, null, `${e.name} 全部科目都準備好了！`);
-    }
+    toast('這一科之前已經領過星星囉 ⭐');
   }
   save(); renderStudy();
 }
@@ -2366,7 +2385,9 @@ function finishExam(id) {
   const e = examById(id); if (!e) return;
   if (e.finished) { toast('已經領過完賽獎勵了'); return; }
   e.finished = true;
-  awardExamOnce(`exam:${id}:finish`, e.finishStars || 5, null, `${e.name} 考完了，辛苦了！`);
+  const fin = e.finishStars ?? 5;   // ?? 不是 ||：設 0 代表不給完賽獎勵
+  if (fin > 0) awardExamOnce(`exam:${id}:finish`, fin, null, `${e.name} 考完了，辛苦了！`);
+  else toast(`${e.name} 考完了，辛苦了！`);
   save();
   document.querySelector('.modal-mask')?.remove();
   openExamSettle(id);
@@ -2856,10 +2877,45 @@ function renderRecords() {
       <div class="row-between" style="margin-top:6px"><span>📝 記錄狀態天數</span><strong>${statusDays} 天</strong></div>
       <div class="row-between" style="margin-top:6px"><span>🎁 兌換次數</span><strong>${redeems} 次</strong></div>
     </div>
+    ${buildExamHistory(state.activeChild)}
     <div class="section-title">星星明細（最近 ${log.length}）</div>
     <div class="card">${logHtml}</div>
     ${chorePhotoHtml}
   `;
+}
+// 考試歷史：各科分數與「和上次比」的進退步，進步獎勵的成果要看得到才有意義
+function buildExamHistory(childId) {
+  const cd = state.data[childId];
+  const list = (cd && Array.isArray(cd.exams) ? cd.exams : [])
+    .filter(e => (e.subjects || []).some(x => x.score != null))
+    .sort((a, b) => b.date.localeCompare(a.date));
+  if (!list.length) return '';
+  const rows = list.map(e => {
+    const subs = (e.subjects || []).filter(x => x.score != null).map(x => {
+      const prev = prevSubjectScore(cd.exams, e, x.name);
+      let delta = '';
+      if (prev != null) {
+        const d = x.score - prev;
+        const col = d > 0 ? 'var(--green)' : d < 0 ? 'var(--muted)' : 'var(--muted)';
+        delta = `<span style="color:${col};font-size:.76rem"> (${d > 0 ? '+' : ''}${d})</span>`;
+      }
+      return `<div class="row-between" style="font-size:.85rem;padding:2px 0">
+        <span>${esc(x.name)}</span><span><strong>${x.score}</strong>${delta}</span>
+      </div>`;
+    }).join('');
+    const avg = (() => {
+      const ss = (e.subjects || []).filter(x => x.score != null).map(x => x.score);
+      return ss.length ? Math.round(ss.reduce((a, b) => a + b, 0) / ss.length) : null;
+    })();
+    return `<div style="padding:8px 2px;border-bottom:1px solid var(--line)">
+      <div class="row-between">
+        <strong>${esc(e.name)}</strong>
+        <span class="muted" style="font-size:.76rem">${e.date}${avg != null ? ` · 平均 ${avg}` : ''}</span>
+      </div>
+      <div style="margin-top:4px">${subs}</div>
+    </div>`;
+  }).join('');
+  return `<div class="section-title">📝 考試成績（${list.length} 次）</div><div class="card">${rows}</div>`;
 }
 function buildChorePhotoSection(childId) {
   const cd = state.data[childId];
