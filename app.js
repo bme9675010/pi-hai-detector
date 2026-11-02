@@ -53,6 +53,8 @@ function blankChildData() {
     })),
     chores: { date:'', drawn:[], manual:[], doneIds:[] },
     study: { date:'', doneIds:[] },   // 今日學習任務完成狀態（跨日重置）
+    exams: [],                        // 考試：準備進度、分數、進步獎勵
+    examAwarded: [],                  // 考試已領獎勵（永久，不隨日期重置）
     studyTasks: null,                 // 學習題庫（逐小孩，首次進入依年齡帶入預設）
     chorePhotos: {},        // choreId:date → { url, t }（跨裝置聯集合併）
     chorePhotosDel: {},     // choreId:date → t（刪除墓碑，讓刪除也能跨裝置傳播）
@@ -262,6 +264,8 @@ function cdata() {
   if (typeof _cpd !== 'object' || _cpd === null || Array.isArray(_cpd)) state.data[id].chorePhotosDel = {};
   if (!state.data[id].study) state.data[id].study = { date:'', doneIds:[] };
   if (!Array.isArray(state.data[id].study.doneIds)) state.data[id].study.doneIds = [];
+  if (!Array.isArray(state.data[id].exams)) state.data[id].exams = [];
+  if (!Array.isArray(state.data[id].examAwarded)) state.data[id].examAwarded = [];
   ensureStudyLib(id);
   return state.data[id];
 }
@@ -1022,6 +1026,8 @@ function resetProgress() {
     d.chorePhotos = {};
     d.chorePhotosDel = {};
     d.study = { date: '', doneIds: [] };
+    d.exams = [];
+    d.examAwarded = [];
     d.status = {};
     d.redeemLog = [];
     d.awarded = { date: '', keys: [] };
@@ -2021,6 +2027,343 @@ function saveChore(id) {
 }
 
 /* ===========================================================
+   考試準備與進步獎勵
+   資料：cd.exams = [{ id, name, date, subjects:[{id,name,ready,score}],
+                      starsPerSubject, bonusStars, finishStars,
+                      finished, settled }]
+   - 準備階段：每科勾「準備好了」領星，全科完成再給 bonus
+   - 考完：按「考完了」給完賽獎勵（不看分數）
+   - 考後登記分數：與「上一次同科目成績」比較，進步才給星，退步不扣星
+   =========================================================== */
+
+// 進步獎勵規則。刻意補上「維持高分」這一條：
+// 純比進步會懲罰原本就考高分的小孩（98 分最多只能進步 2 分），
+// 所以 90 分以上就算小幅退步也給 1 星，但仍少於任何實質進步。
+function improveStars(prev, cur) {
+  if (cur == null) return 0;
+  if (prev == null) return 0;          // 沒有上次成績，這次當基準
+  const d = cur - prev;
+  if (d >= 10) return 3;
+  if (d >= 5)  return 2;
+  if (d >= 1)  return 1;
+  if (cur >= 90) return 1;             // 維持高分也是本事
+  return 0;                            // 退步不扣星
+}
+// 找同一科目「上一次」的成績（比本次考試早、最接近的一筆）
+function prevSubjectScore(exams, currentExam, subjectName) {
+  const earlier = (exams || [])
+    .filter(e => e.id !== currentExam.id && e.date && e.date < currentExam.date)
+    .sort((a, b) => b.date.localeCompare(a.date));   // 最近的排前面
+  for (const e of earlier) {
+    const s = (e.subjects || []).find(x => x.name === subjectName && x.score != null);
+    if (s) return s.score;
+  }
+  return null;
+}
+// 準備完成率
+function examPrepRate(exam) {
+  const subs = (exam && exam.subjects) || [];
+  if (!subs.length) return { done: 0, total: 0, all: false };
+  const done = subs.filter(s => s.ready).length;
+  return { done, total: subs.length, all: done === subs.length };
+}
+// 還沒考的（含今天）→ 顯示倒數與準備勾選
+function upcomingExams(exams, today) {
+  return (exams || []).filter(e => e.date && e.date >= today)
+                      .sort((a, b) => a.date.localeCompare(b.date));
+}
+// 考完但還沒結算的 → 提醒家長登記分數／按考完
+function pendingExams(exams, today) {
+  return (exams || []).filter(e => e.date && e.date < today && !e.settled)
+                      .sort((a, b) => b.date.localeCompare(a.date));
+}
+
+/* 考試獎勵是「一輩子一次」而不是「每天一次」——用獨立清單，不隨日期重置。
+   （awardOnce 會跨日清空 keys，用在考試會變成取消再勾就能重領） */
+function awardExamOnce(key, n, ev, msg) {
+  const cd = cdata();
+  if (!Array.isArray(cd.examAwarded)) cd.examAwarded = [];
+  if (cd.examAwarded.includes(key)) return false;
+  cd.examAwarded.push(key);
+  markActiveToday();
+  addStars(n, ev);
+  logStar('earn', (msg || '').replace(/[！!。]/g, ''), n);
+  if (msg) rewardModal(n, msg);
+  save();
+  return true;
+}
+
+/* ---- 考試：取用與顯示 ---- */
+function exams() {
+  const cd = cdata();
+  if (!Array.isArray(cd.exams)) cd.exams = [];
+  return cd.exams;
+}
+function examById(id) { return exams().find(e => e.id === id); }
+
+// 考試倒數＋各科準備勾選（放在學習頁最上面）
+function examCardsHTML() {
+  const today = todayStr();
+  const up = upcomingExams(exams(), today);
+  if (!up.length) return '';
+  return up.map(e => {
+    const n = daysUntil(e.date);
+    const { done, total, all } = examPrepRate(e);
+    const urgent = n <= 2;
+    const subs = (e.subjects || []).map(s => `
+      <button class="exam-sub ${s.ready ? 'on' : ''}" onclick="toggleSubjectReady('${e.id}','${s.id}',event)">
+        ${s.ready ? '✓' : '○'} ${esc(s.name)}
+      </button>`).join('');
+    return `<div class="card exam-card">
+      <div class="row-between">
+        <strong>📝 ${esc(e.name)}</strong>
+        <strong style="${urgent ? 'color:#C62828' : ''}">${dueLabel(n)}</strong>
+      </div>
+      <div class="muted" style="font-size:.8rem;margin-top:2px">${e.date} · 準備 ${done}/${total}</div>
+      <div class="exam-subs">${subs}</div>
+      ${all
+        ? `<div class="exam-ok">🎉 全部科目都準備好了！</div>`
+        : `<small class="hint" style="display:block;margin-top:6px">每科準備好就按一下，可領 ⭐${e.starsPerSubject}；全部完成再加 ⭐${e.bonusStars}</small>`}
+    </div>`;
+  }).join('');
+}
+// 考完但還沒結算的提醒
+function examPendingHTML() {
+  const pend = pendingExams(exams(), todayStr());
+  if (!pend.length) return '';
+  return `<div class="card" style="border:2px dashed var(--orange)">
+    <strong>⏳ 有考試還沒結算</strong>
+    ${pend.map(e => `<div class="row-between" style="margin-top:6px">
+      <span>${esc(e.name)}（${e.date}）</span>
+      <button class="btn accent sm" onclick="openExamSettle('${e.id}')">登記分數</button>
+    </div>`).join('')}
+  </div>`;
+}
+// 勾選某一科「準備好了」
+function toggleSubjectReady(examId, subId, ev) {
+  if (blockedByLock()) return;
+  const e = examById(examId); if (!e) return;
+  const s = (e.subjects || []).find(x => x.id === subId); if (!s) return;
+  if (s.ready) {
+    s.ready = false;              // 取消不退星
+  } else {
+    s.ready = true;
+    const got = awardExamOnce(`exam:${examId}:${subId}`, e.starsPerSubject || 3, ev, `${e.name}「${s.name}」準備好了！`);
+    if (!got) toast('這一科之前已經領過星星囉 ⭐');
+    // 全科完成的額外獎勵（整場考試只給一次）
+    if (examPrepRate(e).all) {
+      awardExamOnce(`exam:${examId}:allready`, e.bonusStars || 10, null, `${e.name} 全部科目都準備好了！`);
+    }
+  }
+  save(); renderStudy();
+}
+
+/* ---- 考試管理頁 ---- */
+function renderExams() {
+  const today = todayStr();
+  const list = exams().slice().sort((a, b) => b.date.localeCompare(a.date));
+  const rows = list.length ? list.map(e => {
+    const { done, total } = examPrepRate(e);
+    const n = daysUntil(e.date);
+    const past = e.date < today;
+    const scored = (e.subjects || []).filter(s => s.score != null).length;
+    return `<div class="card">
+      <div class="row-between">
+        <strong>${esc(e.name)}</strong>
+        <span class="muted" style="font-size:.8rem">${e.date}${past ? '' : ' · ' + dueLabel(n)}</span>
+      </div>
+      <div class="muted" style="font-size:.8rem;margin-top:4px">
+        科目 ${total} · 準備 ${done}/${total}${scored ? ` · 已登記 ${scored} 科成績` : ''}
+        ${e.settled ? ' · 已結算 ✓' : ''}
+      </div>
+      <div class="gap8"></div>
+      <div class="row-between">
+        <button class="btn ghost sm" onclick="openExamSettle('${e.id}')">📊 登記分數</button>
+        <button class="btn ghost sm" onclick="editExam('${e.id}')">✏️ 編輯</button>
+        <button class="btn ghost sm" onclick="delExam('${e.id}')">🗑️ 刪除</button>
+      </div>
+    </div>`;
+  }).join('') : `<div class="empty"><div class="e">📝</div>還沒有考試<br>在下面新增一場</div>`;
+
+  const subjectChips = D.DEFAULT_SUBJECTS.map(nm =>
+    `<button type="button" class="choice ${nm === '國語' || nm === '數學' ? 'on' : ''}" data-s="${esc(nm)}"
+       onclick="this.classList.toggle('on')">${esc(nm)}</button>`).join('');
+
+  $app.innerHTML = `
+    ${topbar('考試管理')}
+    <div class="card" style="background:var(--bg)">
+      <strong style="font-size:.9rem">⭐ 獎勵怎麼給</strong>
+      <div class="muted" style="font-size:.78rem;margin-top:6px;line-height:1.7">
+        1. 每科按「準備好了」→ 領星<br>
+        2. 全部科目準備完成 → 額外加星（<b>和科目數無關</b>，兄弟姊妹一樣多）<br>
+        3. 考完按「考完了」→ 完賽獎勵，<b>不看分數</b><br>
+        4. 登記分數後，和<b>上次同科目</b>比較給進步獎勵：<br>
+        　進步 10 分以上 +3⭐／5-9 分 +2⭐／1-4 分 +1⭐<br>
+        　維持 90 分以上 +1⭐　·　<b>退步不扣星</b>
+      </div>
+    </div>
+    <div class="section-title">考試清單（${list.length}）</div>
+    ${rows}
+    <div class="section-title">新增考試</div>
+    <div class="card">
+      <div class="field-label">名稱</div>
+      <input type="text" id="ex-name" placeholder="例如：期中考" maxlength="12" value="期中考" />
+      <div class="field-label">考試日期</div>
+      <input type="date" id="ex-date" />
+      <div class="field-label">考哪幾科</div>
+      <div class="chip-group" id="ex-subs">${subjectChips}</div>
+      <div class="field-label">每科準備完成給幾顆星</div>
+      <input type="number" id="ex-per" min="1" max="10" value="3" />
+      <div class="field-label">全科完成的額外獎勵</div>
+      <input type="number" id="ex-bonus" min="0" max="50" value="10" />
+      <div class="field-label">考完了的完賽獎勵</div>
+      <input type="number" id="ex-finish" min="0" max="50" value="5" />
+      <div class="gap8"></div>
+      <button class="btn block accent" onclick="addExam()">＋ 新增考試</button>
+    </div>
+  `;
+}
+function pickedSubjects(containerId) {
+  return [...document.querySelectorAll('#' + containerId + ' .choice.on')].map(b => b.dataset.s);
+}
+function addExam() {
+  const name = (document.getElementById('ex-name').value || '').trim();
+  const date = document.getElementById('ex-date').value || '';
+  const subs = pickedSubjects('ex-subs');
+  if (!name) { alert('請輸入考試名稱'); return; }
+  if (!date) { alert('請選考試日期'); return; }
+  if (!subs.length) { alert('請至少選一個科目'); return; }
+  exams().push({
+    id: uid(), name, date,
+    subjects: subs.map(nm => ({ id: uid(), name: nm, ready: false, score: null })),
+    starsPerSubject: Math.min(10, Math.max(1, parseInt(document.getElementById('ex-per').value, 10) || 3)),
+    bonusStars:      Math.min(50, Math.max(0, parseInt(document.getElementById('ex-bonus').value, 10) || 10)),
+    finishStars:     Math.min(50, Math.max(0, parseInt(document.getElementById('ex-finish').value, 10) || 5)),
+    finished: false, settled: false,
+  });
+  save(); renderExams();
+  toast('已新增考試 ✓');
+}
+function editExam(id) {
+  const e = examById(id); if (!e) return;
+  const chips = D.DEFAULT_SUBJECTS.map(nm => {
+    const on = (e.subjects || []).some(s => s.name === nm);
+    return `<button type="button" class="choice ${on ? 'on' : ''}" data-s="${esc(nm)}" onclick="this.classList.toggle('on')">${esc(nm)}</button>`;
+  }).join('');
+  modal(`
+    <h2>編輯考試</h2>
+    <div style="text-align:left">
+      <div class="field-label">名稱</div>
+      <input type="text" id="ee-name" value="${esc(e.name)}" maxlength="12" />
+      <div class="field-label">考試日期</div>
+      <input type="date" id="ee-date" value="${esc(e.date)}" />
+      <div class="field-label">考哪幾科</div>
+      <div class="chip-group" id="ee-subs">${chips}</div>
+      <small class="hint">取消勾選會移除該科（已登記的分數也會一起不見）</small>
+      <div class="field-label">每科星數</div>
+      <input type="number" id="ee-per" min="1" max="10" value="${e.starsPerSubject}" />
+      <div class="field-label">全科完成獎勵</div>
+      <input type="number" id="ee-bonus" min="0" max="50" value="${e.bonusStars}" />
+      <div class="field-label">完賽獎勵</div>
+      <input type="number" id="ee-finish" min="0" max="50" value="${e.finishStars}" />
+    </div>
+    <div class="gap8"></div>
+    <button class="btn block green" onclick="saveExam('${id}')">儲存</button>
+    <div class="gap8"></div>
+    <button class="btn block ghost" onclick="this.closest('.modal-mask').remove()">取消</button>
+  `);
+}
+function saveExam(id) {
+  const e = examById(id); if (!e) return;
+  const name = (document.getElementById('ee-name').value || '').trim();
+  const date = document.getElementById('ee-date').value || '';
+  const subs = pickedSubjects('ee-subs');
+  if (!name) { alert('請輸入名稱'); return; }
+  if (!date) { alert('請選日期'); return; }
+  if (!subs.length) { alert('請至少選一個科目'); return; }
+  e.name = name; e.date = date;
+  // 保留既有科目的勾選與分數，只增減
+  e.subjects = subs.map(nm => (e.subjects || []).find(s => s.name === nm)
+    || { id: uid(), name: nm, ready: false, score: null });
+  e.starsPerSubject = Math.min(10, Math.max(1, parseInt(document.getElementById('ee-per').value, 10) || 3));
+  e.bonusStars      = Math.min(50, Math.max(0, parseInt(document.getElementById('ee-bonus').value, 10) || 10));
+  e.finishStars     = Math.min(50, Math.max(0, parseInt(document.getElementById('ee-finish').value, 10) || 5));
+  save();
+  document.querySelector('.modal-mask')?.remove();
+  renderExams();
+}
+function delExam(id) {
+  if (!confirm('刪除這場考試？已領的星星不會收回。')) return;
+  const cd = cdata();
+  cd.exams = exams().filter(e => e.id !== id);
+  save(); renderExams();
+}
+
+/* ---- 登記分數／結算 ---- */
+function openExamSettle(id) {
+  const e = examById(id); if (!e) return;
+  const all = exams();
+  const rows = (e.subjects || []).map(s => {
+    const prev = prevSubjectScore(all, e, s.name);
+    return `<div class="row-between" style="margin-top:8px;gap:8px">
+      <span style="flex:1">${esc(s.name)}
+        <small class="muted">${prev != null ? `上次 ${prev}` : '沒有上次成績'}</small></span>
+      <input type="number" class="ex-score" data-sid="${s.id}" min="0" max="100"
+        value="${s.score != null ? s.score : ''}" placeholder="分數" style="width:84px" />
+    </div>`;
+  }).join('');
+  modal(`
+    <h2>${esc(e.name)} 登記分數</h2>
+    <div style="text-align:left">
+      ${rows}
+      <small class="hint" style="display:block;margin-top:10px">
+        和上次同科目比較給進步獎勵：進步 10 分以上 +3⭐／5-9 分 +2⭐／1-4 分 +1⭐／
+        維持 90 分以上 +1⭐。<b>退步不扣星</b>，沒填的科目不計算。
+      </small>
+    </div>
+    <div class="gap8"></div>
+    ${!e.finished ? `<button class="btn block purple" onclick="finishExam('${e.id}')">🎉 考完了！領完賽獎勵 ⭐${e.finishStars}</button><div class="gap8"></div>` : ''}
+    <button class="btn block green" onclick="settleExam('${e.id}')">儲存分數並結算進步獎勵</button>
+    <div class="gap8"></div>
+    <button class="btn block ghost" onclick="this.closest('.modal-mask').remove()">關閉</button>
+  `);
+}
+function finishExam(id) {
+  const e = examById(id); if (!e) return;
+  if (e.finished) { toast('已經領過完賽獎勵了'); return; }
+  e.finished = true;
+  awardExamOnce(`exam:${id}:finish`, e.finishStars || 5, null, `${e.name} 考完了，辛苦了！`);
+  save();
+  document.querySelector('.modal-mask')?.remove();
+  openExamSettle(id);
+}
+function settleExam(id) {
+  const e = examById(id); if (!e) return;
+  const all = exams();
+  let gained = 0; const detail = [];
+  document.querySelectorAll('.ex-score').forEach(inp => {
+    const s = (e.subjects || []).find(x => x.id === inp.dataset.sid);
+    if (!s) return;
+    const raw = (inp.value || '').trim();
+    s.score = raw === '' ? null : Math.min(100, Math.max(0, parseInt(raw, 10) || 0));
+    if (s.score == null) return;
+    const prev = prevSubjectScore(all, e, s.name);
+    const n = improveStars(prev, s.score);
+    // 每科的進步獎勵只給一次（awardOnce 的 key 帶 examId+subjectId）
+    if (n > 0 && awardExamOnce(`exam:${id}:improve:${s.id}`, n, null, null)) {
+      gained += n;
+      detail.push(`${s.name} ${prev != null ? prev + '→' + s.score : s.score} +${n}⭐`);
+    }
+  });
+  e.settled = true;
+  save();
+  document.querySelector('.modal-mask')?.remove();
+  if (gained > 0) rewardModal(gained, '進步獎勵：' + detail.join('、'));
+  else toast('分數已儲存');
+  renderExams();
+}
+
+/* ===========================================================
    模組 6：學習任務（每天 / 每週 / 單次截止日）
    =========================================================== */
 // 今天該出現的學習任務：daily 每天都在、weekly 比對星期、once 未過期才顯示
@@ -2109,12 +2452,16 @@ function renderStudy() {
 
   $app.innerHTML = `
     ${topbar('學習任務')}
+    ${examCardsHTML()}
+    ${examPendingHTML()}
     ${countdown}
     <div class="section-title">📖 今天要做的學習任務</div>
     <small class="hint" style="display:block;margin:-4px 4px 8px">
       打勾 ✓ 完成可領星星${todays.length ? ` · 今天 ${doneN}/${todays.length}` : ''}
     </small>
     ${listHtml}
+
+    <button class="btn block ghost" onclick="go('exams')">📝 考試管理（新增考試／登記分數）</button>
 
     <div class="section-title">📋 學習題庫（${lib.length}）</div>
     <small class="hint" style="display:block;margin:-4px 4px 8px">
@@ -2678,6 +3025,7 @@ function render() {
     flows: renderFlows,
     chores: renderChores,
     study: renderStudy,
+    exams: renderExams,
     status: renderStatus,
     rewards: renderRewards,
     history: renderHistory,

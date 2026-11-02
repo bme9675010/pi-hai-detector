@@ -112,6 +112,9 @@ const DEFAULT_STUDY = [
   { name: "整理書包夾層", desc: "把一週的舊考卷清出來",       emoji: "🎒", stars: 2, repeat: "weekly", days: [5], ages: ["7-9","10-12"] },
 ];
 
+/* 考試科目選項（家長自行勾選，不依年級自動判斷——App 只有年齡層，分不出小2/小4）*/
+const DEFAULT_SUBJECTS = ["國語","數學","英語","自然","社會","生活","健康","音樂","美勞","體育"];
+
 const STUDY_REPEAT_LABEL = { daily: "每天", weekly: "每週", once: "單次" };
 const WEEKDAY_LABEL = ["日","一","二","三","四","五","六"];
 
@@ -145,5 +148,5 @@ const CHILD_COLORS = ["#FF6B6B","#4ECDC4","#FFD93D","#6BCB77","#A66CFF","#FF9F45
 window.APP_DATA = {
   ACTION_POOL, DEFAULT_LEVELS, LEVEL_TYPE_LABEL,
   DEFAULT_FLOWS, DEFAULT_CHORES, STATUS_FIELDS, CHILD_COLORS, DEFAULT_REWARDS,
-  DEFAULT_STUDY, STUDY_REPEAT_LABEL, WEEKDAY_LABEL
+  DEFAULT_STUDY, STUDY_REPEAT_LABEL, WEEKDAY_LABEL, DEFAULT_SUBJECTS
 };

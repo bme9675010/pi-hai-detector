@@ -115,6 +115,49 @@ function pickNow(loc, elName) {
   return pick.ElementValue && pick.ElementValue[0];
 }
 
+/* 考試邏輯（來自 app.js 考試模組） */
+// 進步獎勵規則。刻意補上「維持高分」這一條：
+// 純比進步會懲罰原本就考高分的小孩（98 分最多只能進步 2 分），
+// 所以 90 分以上就算小幅退步也給 1 星，但仍少於任何實質進步。
+function improveStars(prev, cur) {
+  if (cur == null) return 0;
+  if (prev == null) return 0;          // 沒有上次成績，這次當基準
+  const d = cur - prev;
+  if (d >= 10) return 3;
+  if (d >= 5)  return 2;
+  if (d >= 1)  return 1;
+  if (cur >= 90) return 1;             // 維持高分也是本事
+  return 0;                            // 退步不扣星
+}
+// 找同一科目「上一次」的成績（比本次考試早、最接近的一筆）
+function prevSubjectScore(exams, currentExam, subjectName) {
+  const earlier = (exams || [])
+    .filter(e => e.id !== currentExam.id && e.date && e.date < currentExam.date)
+    .sort((a, b) => b.date.localeCompare(a.date));   // 最近的排前面
+  for (const e of earlier) {
+    const s = (e.subjects || []).find(x => x.name === subjectName && x.score != null);
+    if (s) return s.score;
+  }
+  return null;
+}
+// 準備完成率
+function examPrepRate(exam) {
+  const subs = (exam && exam.subjects) || [];
+  if (!subs.length) return { done: 0, total: 0, all: false };
+  const done = subs.filter(s => s.ready).length;
+  return { done, total: subs.length, all: done === subs.length };
+}
+// 還沒考的（含今天）→ 顯示倒數與準備勾選
+function upcomingExams(exams, today) {
+  return (exams || []).filter(e => e.date && e.date >= today)
+                      .sort((a, b) => a.date.localeCompare(b.date));
+}
+// 考完但還沒結算的 → 提醒家長登記分數／按考完
+function pendingExams(exams, today) {
+  return (exams || []).filter(e => e.date && e.date < today && !e.settled)
+                      .sort((a, b) => b.date.localeCompare(a.date));
+}
+
 /* 學習任務排程（來自 app.js 模組 6） */
 function studyTasksForToday(tasks, today) {
   const dow = new Date(today + 'T00:00:00').getDay();
@@ -657,5 +700,116 @@ describe('dueLabel（倒數文字）', () => {
     assert.equal(dueLabel(5), '還有 5 天');
     assert.equal(dueLabel(-1), '已過期');
     assert.equal(dueLabel(null), '');
+  });
+});
+
+/* ---------- improveStars（進步獎勵規則） ---------- */
+describe('improveStars（進步獎勵）', () => {
+  test('進步 10 分以上 → 3 星', () => {
+    assert.equal(improveStars(60, 70), 3);
+    assert.equal(improveStars(50, 95), 3);
+  });
+  test('進步 5-9 分 → 2 星', () => {
+    assert.equal(improveStars(70, 75), 2);
+    assert.equal(improveStars(70, 79), 2);
+  });
+  test('進步 1-4 分 → 1 星', () => {
+    assert.equal(improveStars(80, 81), 1);
+    assert.equal(improveStars(80, 84), 1);
+  });
+  test('退步不扣星（回傳 0 不是負數）', () => {
+    assert.equal(improveStars(80, 70), 0);
+    assert.equal(improveStars(60, 20), 0);
+  });
+  test('高分天花板：維持 90 以上仍給 1 星', () => {
+    assert.equal(improveStars(98, 98), 1, '滿分附近持平也該有獎勵');
+    assert.equal(improveStars(98, 95), 1, '98→95 仍是高分，不該是 0');
+    assert.equal(improveStars(92, 90), 1);
+  });
+  test('低分持平或退步 → 0 星', () => {
+    assert.equal(improveStars(70, 70), 0);
+    assert.equal(improveStars(89, 89), 0, '89 未達 90 門檻');
+  });
+  test('實質進步的獎勵一定 >= 維持高分', () => {
+    assert.ok(improveStars(85, 90) > improveStars(98, 95),
+      '進步 5 分(2星) 應該多於 高分持平(1星)');
+  });
+  test('沒有上次成績 → 0 星（這次當基準）', () => {
+    assert.equal(improveStars(null, 95), 0);
+  });
+  test('沒填這次分數 → 0 星', () => {
+    assert.equal(improveStars(80, null), 0);
+    assert.equal(improveStars(null, null), 0);
+  });
+  test('邊界：剛好 5 分與剛好 10 分', () => {
+    assert.equal(improveStars(70, 74), 1);
+    assert.equal(improveStars(70, 75), 2);
+    assert.equal(improveStars(70, 79), 2);
+    assert.equal(improveStars(70, 80), 3);
+  });
+});
+
+/* ---------- prevSubjectScore（找上次同科目成績） ---------- */
+describe('prevSubjectScore（上次成績）', () => {
+  const mk = (id, date, subs) => ({ id, date, subjects: subs });
+  const sep = mk('e1', '2026-09-20', [{ name:'國語', score:70 }, { name:'數學', score:80 }]);
+  const nov = mk('e2', '2026-11-13', [{ name:'國語', score:85 }, { name:'數學', score:null }]);
+  const all = [sep, nov];
+
+  test('找得到較早考試的同科成績', () => {
+    assert.equal(prevSubjectScore(all, nov, '國語'), 70);
+    assert.equal(prevSubjectScore(all, nov, '數學'), 80);
+  });
+  test('只往前找，不會拿到之後的考試', () => {
+    assert.equal(prevSubjectScore(all, sep, '國語'), null);
+  });
+  test('沒考過的科目回傳 null', () => {
+    assert.equal(prevSubjectScore(all, nov, '自然'), null);
+  });
+  test('取「最接近的」那一次，不是最早那次', () => {
+    const oct = mk('e3', '2026-10-15', [{ name:'國語', score:78 }]);
+    assert.equal(prevSubjectScore([sep, oct, nov], nov, '國語'), 78, '應拿 10 月的 78 而非 9 月的 70');
+  });
+  test('跳過沒登記分數的那次', () => {
+    const oct = mk('e3', '2026-10-15', [{ name:'國語', score:null }]);
+    assert.equal(prevSubjectScore([sep, oct, nov], nov, '國語'), 70, '10月沒分數，應往前拿 9 月的');
+  });
+  test('不會拿自己當上次', () => {
+    assert.equal(prevSubjectScore([nov], nov, '國語'), null);
+  });
+});
+
+/* ---------- examPrepRate / upcomingExams / pendingExams ---------- */
+describe('考試準備進度與分類', () => {
+  const mk = (id, date, subs, settled) =>
+    ({ id, date, subjects: subs.map(r => ({ name:'x', ready:r })), settled: !!settled });
+
+  test('準備完成率', () => {
+    assert.deepEqual(examPrepRate(mk('a','2026-11-13',[true,false,false])),
+                     { done:1, total:3, all:false });
+    assert.deepEqual(examPrepRate(mk('a','2026-11-13',[true,true])),
+                     { done:2, total:2, all:true });
+  });
+  test('沒有科目時 all 為 false（不該誤判成全部完成）', () => {
+    assert.deepEqual(examPrepRate({ subjects: [] }), { done:0, total:0, all:false });
+    assert.deepEqual(examPrepRate({}), { done:0, total:0, all:false });
+  });
+  test('兄妹科目數不同，各自都能達成 all', () => {
+    const bro = mk('b','2026-11-13',[true,true,true,true,true]);   // 5 科
+    const sis = mk('s','2026-11-13',[true,true]);                  // 2 科
+    assert.equal(examPrepRate(bro).all, true);
+    assert.equal(examPrepRate(sis).all, true);
+  });
+  test('upcoming 只含今天（含）之後，且由近到遠', () => {
+    const list = [mk('late','2026-12-01',[]), mk('past','2026-10-01',[]), mk('today','2026-11-02',[])];
+    assert.deepEqual(upcomingExams(list, '2026-11-02').map(e => e.id), ['today','late']);
+  });
+  test('pending 只含已過期且未結算的', () => {
+    const list = [mk('done','2026-10-01',[],true), mk('todo','2026-10-20',[],false), mk('future','2026-12-01',[])];
+    assert.deepEqual(pendingExams(list, '2026-11-02').map(e => e.id), ['todo']);
+  });
+  test('空清單不會壞', () => {
+    assert.deepEqual(upcomingExams([], '2026-11-02'), []);
+    assert.deepEqual(pendingExams(null, '2026-11-02'), []);
   });
 });
