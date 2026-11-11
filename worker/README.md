@@ -33,6 +33,29 @@
 
 5. 把那個網址貼到 App →「管理」頁的「AI 生成服務網址」欄位，存檔即可。
 
+## 保護 AI 端點（重要）
+
+AI 生成是唯一會產生費用的端點。`ALLOWED_ORIGIN` 只擋得住瀏覽器，
+用 curl 自己帶一個 Origin header 就能繞過，所以務必再設一把密鑰：
+
+```
+wrangler secret put APP_SECRET
+wrangler deploy
+```
+
+隨便一串夠長的亂碼即可（例如 `openssl rand -base64 24`）。設定後，
+到 App →「管理」→「App 密鑰」貼上同一串，**每支手機都要貼一次**。
+
+沒設定 `APP_SECRET` 時 Worker 會放行（避免還沒設定就壞掉），
+但等於沒有保護，管理頁會顯示警告。
+
+另外 `wrangler.toml` 的 `AI_DAILY_LIMIT`（預設 60）是每日呼叫上限，
+就算密鑰外洩，帳單也有天花板。計數存在 KV，兩天後自動過期。
+
+⚠️ Worker 網址本身請當作半公開資訊看待：它曾經不小心進過公開 repo 的
+git 歷史，而且 `wrangler.toml` 裡的 `name` 加上帳號子網域就能推算出來。
+真正的防線是這把密鑰與每日上限，不是網址保密。
+
 ## 天氣改用中央氣象署 CWA（台灣較準）
 
 設定 CWA 授權碼（到 https://opendata.cwa.gov.tw/ 免費註冊取得），存成 secret 後重新部署：

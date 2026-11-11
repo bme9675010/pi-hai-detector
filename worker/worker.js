@@ -252,6 +252,31 @@ export default {
     let body;
     try { body = await request.json(); } catch { return json({ error: 'bad json' }, 400, cors); }
 
+    // ---- AI 生成：唯一會產生費用的端點，額外兩道防護 ----
+    // Origin 檢查擋不住 curl（加個 header 就過），而 worker 網址曾不小心進過
+    // 公開 repo 的歷史，所以這裡要有真正的驗證。
+    const aiPath = new URL(request.url).pathname;
+    const isAiCall = (aiPath === '/' || aiPath === '') && typeof body.type === 'string';
+    if (isAiCall) {
+      // 1) 共用密鑰。沒設定 APP_SECRET 時放行，避免使用者還沒設定就壞掉；
+      //    一旦設了就強制比對。
+      if (env.APP_SECRET && body.secret !== env.APP_SECRET) {
+        return json({ error: '未授權（請到管理頁填入 App 密鑰）' }, 401, cors);
+      }
+      // 2) 每日呼叫上限，就算密鑰外洩帳單也有天花板
+      const cap = parseInt(env.AI_DAILY_LIMIT, 10) || 60;
+      if (env.SYNC) {
+        const day = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' });
+        const kkey = 'ailimit:' + day;
+        const used = parseInt(await env.SYNC.get(kkey), 10) || 0;
+        if (used >= cap) {
+          return json({ error: `今日 AI 生成已達上限（${cap} 次），明天再試` }, 429, cors);
+        }
+        // 兩天後自動過期，不用自己清
+        await env.SYNC.put(kkey, String(used + 1), { expirationTtl: 172800 });
+      }
+    }
+
     // ---- 雲端同步（用同步碼存取 KV）----
     const path = new URL(request.url).pathname;
     if (path === '/sync/save' || path === '/sync/load') {

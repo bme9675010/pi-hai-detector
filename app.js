@@ -341,6 +341,10 @@ function voiceInput(id) {
 /* ---------------- AI 生成（呼叫 Cloudflare Worker 代理） ---------------- */
 // AI/同步服務網址改存「本機獨立」設定（不隨 state 被匯入/還原/同步覆蓋）；相容舊的 state.aiProxyUrl
 const PROXY_KEY = 'pi_hai_proxy';
+// App 密鑰：和 Cloudflare 的 APP_SECRET 比對，擋掉別人直接打 AI 端點燒額度。
+// 只存這支手機，不進 state、不同步雲端、不進 repo。
+const SECRET_KEY = 'pi_hai_secret';
+function getAppSecret() { return (localStorage.getItem(SECRET_KEY) || '').trim(); }
 function getProxy() { return (localStorage.getItem(PROXY_KEY) || (state && state.aiProxyUrl) || '').trim(); }
 function aiEnabled() { return !!getProxy(); }   // 沒設定網址就不顯示 AI 按鈕
 async function aiGenerate(type, params, btn) {
@@ -353,7 +357,7 @@ async function aiGenerate(type, params, btn) {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type, ...params }),
+      body: JSON.stringify({ type, ...params, secret: getAppSecret() }),
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
@@ -763,6 +767,20 @@ function renderChildren() {
       <input type="text" id="ai-url" value="${esc(getProxy())}" placeholder="https://pi-hai-ai.xxx.workers.dev" />
       <div class="gap8"></div>
       <button class="btn block green" onclick="saveAiUrl()">儲存網址</button>
+      <div class="field-label">App 密鑰</div>
+      <small class="hint" style="display:block;margin-bottom:6px">
+        要和 Cloudflare 的 <code>APP_SECRET</code> 一樣。沒填的話，只要有人知道你的 Worker
+        網址就能拿去用 AI、算在你的帳單上。
+      </small>
+      <div class="row-between" style="gap:6px">
+        <input type="password" id="ai-secret" value="${esc(getAppSecret())}" placeholder="貼上 APP_SECRET" style="flex:1" />
+        <button class="btn ghost sm" onclick="toggleReveal('ai-secret', this)">👁️</button>
+      </div>
+      <div class="gap8"></div>
+      <button class="btn block green" onclick="saveAppSecret()">儲存密鑰</button>
+      ${getProxy() && !getAppSecret()
+        ? `<div class="gap8"></div><small class="hint" style="color:var(--orange)">⚠️ 尚未設定密鑰，AI 端點目前沒有保護</small>`
+        : ''}
     </div>
 
     <div class="section-title">這台裝置名稱</div>
@@ -961,6 +979,12 @@ function saveChild() {
   document.querySelector('.modal-mask')?.remove();
   render();
 }
+function saveAppSecret() {
+  const v = (document.getElementById('ai-secret').value || '').trim();
+  localStorage.setItem(SECRET_KEY, v);
+  toast(v ? 'App 密鑰已儲存 ✓' : '已清除密鑰');
+  renderChildren();
+}
 function saveAiUrl() {
   const v = (document.getElementById('ai-url').value || '').trim();
   localStorage.setItem(PROXY_KEY, v);
@@ -982,6 +1006,12 @@ function scheduleSync() {
   if (!syncActive() || localStorage.getItem('pi_hai_autosync') === '0') return;
   clearTimeout(syncTimer);
   syncTimer = setTimeout(() => syncNow(true, null, true), 1200);   // notify=true：上傳後通知其他裝置
+}
+function toggleReveal(id, btn) {
+  const inp = document.getElementById(id);
+  if (!inp) return;
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+  btn.textContent = inp.type === 'password' ? '👁️' : '🙈';
 }
 function toggleSyncReveal(btn) {
   const inp = document.getElementById('sync-code');
